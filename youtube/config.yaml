@@ -1,0 +1,100 @@
+advanced:
+  ai_timeout: 180
+  extraction_timeout: 60
+  retry_attempts: 3
+  subtitle_languages:
+  - en
+  - en-US
+  - en-GB
+ai:
+  chunk_model: meta-llama/llama-3.3-70b-instruct:free
+  final_model: google/gemini-2.0-flash-exp:free
+  max_tokens:
+    chunk_summary: 1000
+    final_summary: 3000
+    qa_response: 2000
+  qa_model: google/gemini-2.0-flash-exp:free
+  fallback_models:
+    chunk:
+      - meta-llama/llama-3.3-70b-instruct:free
+      - deepseek/deepseek-chat-v3-0324:free
+      - google/gemma-3-27b-it:free
+      - mistralai/mistral-7b-instruct:free
+      - meta-llama/llama-3.1-8b-instruct:free
+    final:
+      - google/gemini-2.0-flash-exp:free
+      - deepseek/deepseek-chat-v3-0324:free
+      - meta-llama/llama-3.3-70b-instruct:free
+      - google/gemma-3-27b-it:free
+      - mistralai/mistral-7b-instruct:free
+    qa:
+      - google/gemini-2.0-flash-exp:free
+      - deepseek/deepseek-chat-v3-0324:free
+      - meta-llama/llama-3.3-70b-instruct:free
+      - google/gemma-3-27b-it:free
+      - mistralai/mistral-7b-instruct:free
+  temperature:
+    qa: 0.7
+    summarization: 0.7
+cache:
+  expiry_hours: 24
+  max_cached_per_room: 5
+features:
+  ai_summarization: true
+  caching_enabled: true
+  qa_enabled: true
+  show_progress: true
+  subtitle_extraction: true
+processing:
+  chunk_overlap: 1000
+  chunk_size: 12000
+  max_chunks: 20
+  max_qa_transcript_length: 25000
+prompts:
+  chunk_summary: 'Summarize this part ({chunk_num}/{total_chunks}) of the YouTube
+    video "{title}".
+    Focus on:
+    - Key points and main ideas
+    - Important details and facts
+    Keep it concise but informative:
+
+    {chunk}
+
+    '
+  final_summary: 'Create a comprehensive summary of the YouTube video "{title}" based
+    on these section summaries:
+
+
+    {combined_summaries}
+
+
+    Create a well-structured summary that:
+
+    - Captures the main theme and purpose
+
+    - Highlights key points and insights
+
+    - Maintains logical flow
+
+    - Is engaging and informative
+
+
+    Format with clear sections if appropriate.
+
+    '
+  qa_prompt: 'Answer the following question about the YouTube video "{title}" based
+    on its transcript:
+
+
+    Question: {question}
+
+
+    Video transcript:
+
+    {transcript}
+
+
+    Provide a helpful, accurate answer based on the content. If the information isn''t
+    in the transcript, say so.
+
+    '
