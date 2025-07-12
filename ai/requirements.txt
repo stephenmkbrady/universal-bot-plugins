@@ -1,0 +1,8 @@
+# AI Plugin Dependencies
+aiohttp>=3.8.0
+
+# Base dependencies (should be installed in main environment)
+# logging - built-in
+# os - built-in  
+# time - built-in
+# typing - built-in

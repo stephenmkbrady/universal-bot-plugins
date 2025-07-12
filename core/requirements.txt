@@ -1,0 +1,8 @@
+# Core Plugin Dependencies
+# This plugin uses only built-in Python modules
+
+# Base dependencies (should be installed in main environment)
+# logging - built-in
+# asyncio - built-in
+# datetime - built-in
+# typing - built-in

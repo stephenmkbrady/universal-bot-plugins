@@ -1,0 +1,11 @@
+# Database Plugin Dependencies
+aiohttp>=3.8.0
+aiofiles>=23.1.0
+
+# Base dependencies (should be installed in main environment)
+# logging - built-in
+# json - built-in
+# mimetypes - built-in
+# datetime - built-in
+# pathlib - built-in
+# typing - built-in
