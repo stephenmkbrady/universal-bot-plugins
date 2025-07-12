@@ -757,8 +757,39 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
                 return f"❌ Todo list '{list_name}' not found"
             
             if len(matching_lists) > 1:
-                list_names = [l.attributes.get('friendly_name', l.entity_id) for l in matching_lists]
-                return f"❌ Multiple todo lists match '{list_name}': {', '.join(list_names)}"
+                # Show both matching lists instead of error
+                response = f"📋 **Multiple todo lists match '{list_name}':**\n\n"
+                
+                for todo_list in matching_lists:
+                    list_friendly_name = todo_list.attributes.get('friendly_name', todo_list.entity_id)
+                    try:
+                        # Get actual items for each matching list
+                        items_response = await self._async_call_service_with_response('todo', 'get_items', todo_list.entity_id)
+                        if isinstance(items_response, tuple) and len(items_response) > 1:
+                            response_data = items_response[1]
+                            items = response_data.get(todo_list.entity_id, {}).get('items', [])
+                        else:
+                            items = items_response.get('items', []) if items_response else []
+                        
+                        # Count not-done items
+                        not_done_count = sum(1 for item in items if item.get('status', 'needs_action') != 'completed')
+                        total_count = len(items)
+                        
+                        # Extract aliases for the list name
+                        aliases = self._extract_aliases_from_name(list_friendly_name)
+                        alias_text = f" [{', '.join(aliases[:2])}]" if aliases else ""
+                        
+                        response += f"📝 **{list_friendly_name}**: {not_done_count}/{total_count} pending{alias_text}\n"
+                        
+                    except Exception as e:
+                        # Fallback to state count if service call fails
+                        item_count = int(todo_list.state) if todo_list.state.isdigit() else 0
+                        aliases = self._extract_aliases_from_name(list_friendly_name)
+                        alias_text = f" [{', '.join(aliases[:2])}]" if aliases else ""
+                        response += f"📝 **{list_friendly_name}**: {item_count} items{alias_text}\n"
+                
+                response += f"\n**Usage:** `!ha todo <list> [add|done|undo] [item]`"
+                return response
             
             todo_list = matching_lists[0]
             list_friendly_name = todo_list.attributes.get('friendly_name', todo_list.entity_id)
@@ -785,8 +816,17 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
                 if not items:
                     return f"📋 **{list_friendly_name}** is empty"
                 
-                response = f"📋 **{list_friendly_name}** ({len(items)} items):\n\n"
-                for i, item in enumerate(items, 1):
+                # Sort items: not-done items first, then completed items
+                not_done_items = [item for item in items if item.get('status', 'needs_action') != 'completed']
+                completed_items = [item for item in items if item.get('status', 'needs_action') == 'completed']
+                sorted_items = not_done_items + completed_items
+                
+                not_done_count = len(not_done_items)
+                total_count = len(items)
+                
+                response = f"📋 **{list_friendly_name}** ({not_done_count}/{total_count} pending):\n\n"
+                
+                for i, item in enumerate(sorted_items, 1):
                     status = item.get('status', 'needs_action')
                     summary = item.get('summary', 'No description')
                     icon = "✅" if status == 'completed' else "⭕"
