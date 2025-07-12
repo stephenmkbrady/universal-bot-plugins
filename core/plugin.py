@@ -48,7 +48,7 @@ class UniversalCorePlugin(UniversalBotPlugin):
         return [
             "help", "ping", "status", "uptime",
             "plugins", "reload", "enable", "disable",
-            "platform", "commands", "info"
+            "platform", "commands"
         ]
     
     async def handle_command(self, context: CommandContext) -> Optional[str]:
@@ -61,7 +61,7 @@ class UniversalCorePlugin(UniversalBotPlugin):
             elif context.command == "ping":
                 return await self._handle_ping(context)
             elif context.command == "status":
-                return await self._handle_status(context)
+                return await self._handle_info(context)  # Renamed info to status
             elif context.command == "uptime":
                 return await self._handle_uptime(context)
             elif context.command == "plugins":
@@ -76,8 +76,6 @@ class UniversalCorePlugin(UniversalBotPlugin):
                 return await self._handle_platform_info(context)
             elif context.command == "commands":
                 return await self._handle_commands(context)
-            elif context.command == "info":
-                return await self._handle_info(context)
                 
         except Exception as e:
             self.logger.error(f"Error handling {context.command} command: {str(e)}", exc_info=True)
@@ -107,13 +105,12 @@ class UniversalCorePlugin(UniversalBotPlugin):
 
 **Core Commands:**
 • `!help` - Show this help message
-• `!status` - Show bot status and health
+• `!status` - Show detailed bot information and status
 • `!ping` - Test bot responsiveness
 • `!uptime` - Show how long bot has been running
 • `!plugins` - List all loaded plugins
 • `!commands` - List all available commands
 • `!platform` - Show platform information
-• `!info` - Show detailed bot information
 
 **Plugin Management:**
 • `!reload <plugin>` - Reload a specific plugin
@@ -144,51 +141,6 @@ class UniversalCorePlugin(UniversalBotPlugin):
         """Handle ping command"""
         return f"🏓 Pong! Bot is responsive on {context.platform.value}."
     
-    async def _handle_status(self, context: CommandContext) -> str:
-        """Show bot status and health information"""
-        try:
-            plugin_manager = getattr(self.adapter.bot, 'plugin_manager', None)
-            uptime = datetime.now() - self.start_time
-            
-            status_text = f"""🤖 **Bot Status - {context.platform.value.title()}**
-
-**Health:** ✅ Online and responsive
-**Uptime:** {str(uptime).split('.')[0]}
-**Platform:** {context.platform.value.title()}
-**Core Plugin:** v{self.version}
-
-**Plugin Status:**"""
-            
-            if plugin_manager:
-                loaded_count = len(plugin_manager.plugins)
-                failed_count = len(plugin_manager.failed_plugins)
-                enabled_count = sum(1 for p in plugin_manager.plugins.values() if p.enabled)
-                
-                status_text += f"""
-• **Loaded:** {loaded_count} plugins
-• **Enabled:** {enabled_count} plugins
-• **Failed:** {failed_count} plugins
-• **Hot Reloading:** {'🔥 Active' if plugin_manager.file_observer and plugin_manager.file_observer.is_alive() else '❄️ Inactive'}"""
-                
-                if failed_count > 0:
-                    status_text += "\n\n**Failed Plugins:**"
-                    for name, error in plugin_manager.failed_plugins.items():
-                        status_text += f"\n• `{name}`: {error[:100]}..."
-            
-            # Platform-specific status
-            if context.platform == BotPlatform.SIMPLEX:
-                bot = self.adapter.bot
-                if hasattr(bot, 'websocket_manager'):
-                    ws_status = "🟢 Connected" if bot.websocket_manager.websocket else "🔴 Disconnected"
-                    status_text += f"\n\n**SimpleX Status:**\n• WebSocket: {ws_status}"
-                    if hasattr(bot, 'contacts'):
-                        status_text += f"\n• Contacts: {len(bot.contacts)}"
-                
-            return status_text
-            
-        except Exception as e:
-            self.logger.error(f"Error getting status: {e}")
-            return "❌ Error retrieving bot status"
     
     async def _handle_uptime(self, context: CommandContext) -> str:
         """Show bot uptime"""
@@ -389,19 +341,25 @@ class UniversalCorePlugin(UniversalBotPlugin):
             
             # Platform-specific info
             if context.platform == BotPlatform.SIMPLEX:
-                bot = self.adapter.bot
-                info_text += f"""
+                bot_instance = getattr(self.adapter, 'bot_instance', None)
+                if bot_instance:
+                    # Check WebSocket status
+                    ws_status = "🟢 Connected" if (hasattr(bot_instance, 'websocket_manager') and 
+                                                  bot_instance.websocket_manager.websocket) else "🔴 Disconnected"
+                    
+                    info_text += f"""
 
 **SimpleX Configuration:**
-• Bot Name: {getattr(bot, 'config', {}).get('name', 'SimpleX Bot')}
-• WebSocket: {getattr(bot.websocket_manager, 'websocket_url', 'N/A') if hasattr(bot, 'websocket_manager') else 'N/A'}
-• Contacts: {len(getattr(bot, 'contacts', {}))}"""
+• Bot Name: {getattr(bot_instance, 'config', {}).get('name', 'SimpleX Bot')}
+• WebSocket: {ws_status} ({getattr(bot_instance.websocket_manager, 'websocket_url', 'N/A') if hasattr(bot_instance, 'websocket_manager') else 'N/A'})
+• Contacts: Use `!contacts list` for live contact info"""
             
             return info_text
             
         except Exception as e:
             self.logger.error(f"Error getting bot info: {e}")
             return "❌ Error retrieving bot information"
+    
     
     async def cleanup(self):
         """Cleanup when plugin is unloaded"""

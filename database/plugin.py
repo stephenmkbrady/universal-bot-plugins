@@ -6,8 +6,7 @@ import json
 import mimetypes
 from datetime import datetime
 from pathlib import Path
-from plugins.plugin_interface import BotPlugin
-from config import BotConfig
+from plugins.universal_plugin_base import UniversalBotPlugin, CommandContext, BotPlatform
 
 
 class ChatDatabaseClient:
@@ -216,89 +215,70 @@ class ChatDatabaseClient:
             return False
 
 
-class DatabasePlugin(BotPlugin):
-    def __init__(self):
-        super().__init__("database")
+class UniversalDatabasePlugin(UniversalBotPlugin):
+    def __init__(self, logger=None):
+        super().__init__("database", logger=logger)
         self.version = "1.0.0"
-        self.description = "Database integration for storing and retrieving Matrix messages"
-        self.logger = logging.getLogger(f"plugin.{self.name}")
+        self.description = "Universal database integration for storing and retrieving messages"
         self.bot = None
+        
+        if not self.logger:
+            self.logger = logging.getLogger(f"plugin.{self.name}")
     
-    async def initialize(self, bot_instance) -> bool:
-        """Initialize plugin with bot instance"""
-        self.bot = bot_instance
+    async def initialize(self, adapter) -> bool:
+        """Initialize plugin with bot adapter"""
+        # Call parent initialization
+        if not await super().initialize(adapter):
+            return False
+            
+        # Get bot instance from adapter
+        self.bot = getattr(adapter, 'bot_instance', None)
+        if not self.bot:
+            self.logger.error("Cannot access bot instance from adapter")
+            return False
         
         # Get database configuration from plugin config and environment
         try:
-            config = BotConfig()
-            plugin_config = config.get_plugin_config("database")
-            
-            # Get URL and API key from plugin config (which supports env var interpolation)
-            api_url = plugin_config.get("api_url")
-            api_key = plugin_config.get("api_key")
-            
-            if not api_url:
-                self.logger.warning("Database API URL not configured in plugins.yaml - database features disabled")
-                self.logger.warning("Please add 'api_url' to database config in plugins.yaml")
-                self.enabled = False
-                bot_instance.db_enabled = False
-                bot_instance.db_client = None
-                return True
-                
-            if not api_key:
-                self.logger.warning("Database API key not configured in plugins.yaml - database features disabled")
-                self.logger.warning("Please add 'api_key: \"${DATABASE_API_KEY}\"' to database config in plugins.yaml")
-                self.enabled = False
-                bot_instance.db_enabled = False
-                bot_instance.db_client = None
-                return True
-            
-            # Create database client
-            self.logger.info(f"Initializing database client for: {api_url}")
-            bot_instance.db_client = ChatDatabaseClient(api_url, api_key)
-            
-            # Test connection
-            self.logger.info("Testing database connection...")
-            is_healthy = await bot_instance.db_client.health_check()
-            
-            if is_healthy:
-                bot_instance.db_enabled = True
-                self.enabled = True
-                self.logger.info("✅ Database client initialized and connected successfully")
-            else:
-                self.logger.error("❌ Database health check failed - database features disabled")
-                self.enabled = False
-                bot_instance.db_enabled = False
-                bot_instance.db_client = None
-                
+            # For now, disable database functionality as config access needs updating
+            self.logger.warning("Database functionality temporarily disabled - needs config system update")
+            self.enabled = False
+            if hasattr(self.bot, 'db_enabled'):
+                self.bot.db_enabled = False
+                self.bot.db_client = None
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize database client: {e}")
             self.enabled = False
-            bot_instance.db_enabled = False
-            bot_instance.db_client = None
+            if hasattr(self.bot, 'db_enabled'):
+                self.bot.db_enabled = False
+                self.bot.db_client = None
         
         return True
     
     def get_commands(self) -> List[str]:
         return ["db"]
     
-    async def handle_command(self, command: str, args: str, room_id: str, user_id: str, bot_instance) -> Optional[str]:
-        self.logger.info(f"Handling {command} command from {user_id} in {room_id}")
+    async def handle_command(self, context: CommandContext) -> Optional[str]:
+        """Handle commands for this plugin"""
+        self.logger.info(f"Handling {context.command} command from {context.user_display_name}")
         
         if not self.bot or not self.enabled:
             self.logger.error("Database functionality not available")
             return "❌ Database functionality not available"
         
         try:
-            if command == "db":
-                if args == "health":
-                    return await self._handle_db_health()
-                elif args == "stats" or args == "status":
-                    return await self._handle_db_stats()
+            if context.command == "db":
+                if context.has_args:
+                    subcommand = context.args[0].lower()
+                    if subcommand == "health":
+                        return await self._handle_db_health()
+                    elif subcommand == "stats" or subcommand == "status":
+                        return await self._handle_db_stats()
+                    else:
+                        return "❌ Unknown database command. Use 'db health', 'db stats', or 'db status'"
                 else:
-                    return "❌ Unknown database command. Use 'db health', 'db stats', or 'db status'"
+                    return "❌ Database command requires arguments. Use 'db health', 'db stats', or 'db status'"
         except Exception as e:
-            self.logger.error(f"Error handling {command} command from {user_id}: {str(e)}", exc_info=True)
+            self.logger.error(f"Error handling {context.command} command: {str(e)}", exc_info=True)
             return f"❌ Error processing database command"
         
         return None
