@@ -23,12 +23,19 @@ Commands:
 - !ha climate <name> <temperature> - Set temperature
 - !ha automation <name> - Run automation
 - !ha entities - List all entities
+- !ha todos - List all todo lists
+- !ha todo <list> - Show items in a specific todo list
+- !ha todo <list> add <item> - Add item to todo list
+- !ha todo <list> done <item> - Mark item as complete
+- !ha todo <list> undo <item> - Mark completed item as todo
 """
 
 from typing import List, Optional, Dict, Any
 import logging
 import asyncio
 import yaml
+import os
+import re
 from pathlib import Path
 from homeassistant_api import Client as HomeAssistantClient
 
@@ -56,12 +63,15 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         self._load_config()
     
     def _load_config(self):
-        """Load plugin configuration from config.yaml"""
+        """Load plugin configuration from config.yaml with environment variable substitution"""
         try:
             config_path = Path(__file__).parent / "config.yaml"
             if config_path.exists():
                 with open(config_path, 'r') as f:
-                    full_config = yaml.safe_load(f)
+                    content = f.read()
+                    # Simple environment variable substitution
+                    content = self._substitute_env_vars(content)
+                    full_config = yaml.safe_load(content)
                     self.config = full_config.get('homeassistant', {})
                     self.logger.info(f"Loaded Home Assistant config from {config_path}")
             else:
@@ -70,6 +80,75 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         except Exception as e:
             self.logger.error(f"Failed to load Home Assistant config: {e}")
             self.config = {}
+    
+    def _substitute_env_vars(self, content: str) -> str:
+        """Substitute environment variables in config content"""
+        # Pattern: ${VAR_NAME:default_value} or ${VAR_NAME}
+        pattern = r'\$\{([^}:]+)(?::([^}]*))?\}'
+        
+        def replace_var(match):
+            var_name = match.group(1)
+            default_value = match.group(2) if match.group(2) is not None else ""
+            return os.getenv(var_name, default_value)
+        
+        return re.sub(pattern, replace_var, content)
+    
+    def _extract_aliases_from_name(self, name: str) -> List[str]:
+        """Extract potential aliases from a light's friendly name"""
+        if not name:
+            return []
+        
+        # Common words to filter out
+        stop_words = {
+            'light', 'lamp', 'bulb', 'switch', 'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for'
+        }
+        
+        # Split name into words and clean them
+        words = []
+        for word in name.lower().split():
+            # Remove common punctuation
+            word = word.strip('()[]{}.,!?":;')
+            # Skip empty words, numbers, and stop words
+            if word and not word.isdigit() and word not in stop_words:
+                # Filter out words with special characters (umlauts, etc.)
+                if word.isascii() and word.isalpha():
+                    words.append(word)
+        
+        return words
+    
+    def _find_entities_by_alias(self, entities, search_term: str):
+        """Find all entities (lights/switches/etc) matching an alias or search term"""
+        search_term = search_term.lower().strip()
+        matching_entities = []
+        
+        # First pass: exact alias match
+        for entity in entities:
+            entity_id = entity.entity_id.lower()
+            friendly_name = entity.attributes.get('friendly_name', '')
+            
+            # Check entity ID parts (e.g., "light.office_desk_lamp" -> ["office", "desk", "lamp"])
+            entity_parts = entity_id.split('.')[1].replace('_', ' ').split() if '.' in entity_id else []
+            
+            # Check friendly name aliases
+            name_aliases = self._extract_aliases_from_name(friendly_name)
+            
+            # Combine all possible aliases
+            all_aliases = entity_parts + name_aliases
+            
+            # Exact match on any alias
+            if search_term in all_aliases:
+                matching_entities.append(entity)
+        
+        # If no exact alias matches, try partial match in friendly name or entity ID
+        if not matching_entities:
+            for entity in entities:
+                entity_id = entity.entity_id.lower()
+                friendly_name = entity.attributes.get('friendly_name', '').lower()
+                
+                if (search_term in entity_id or search_term in friendly_name):
+                    matching_entities.append(entity)
+        
+        return matching_entities
     
     async def initialize(self, adapter) -> bool:
         """Initialize plugin with bot adapter"""
@@ -95,17 +174,22 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         """Initialize Home Assistant API client"""
         try:
             host = self.config.get('host', 'localhost')
-            port = self.config.get('port', 8123)
+            port = int(self.config.get('port', 8123))
             token = self.config.get('token', '')
-            ssl = self.config.get('ssl', False)
+            ssl_config = self.config.get('ssl', False)
+            # Convert string 'false'/'true' to boolean
+            if isinstance(ssl_config, str):
+                ssl = ssl_config.lower() in ('true', '1', 'yes', 'on')
+            else:
+                ssl = bool(ssl_config)
             
             if not token:
                 self.logger.error("Home Assistant token not configured")
                 return False
             
-            # Build URL
+            # Build URL - HomeAssistant API client expects the full API URL
             protocol = 'https' if ssl else 'http'
-            url = f"{protocol}://{host}:{port}"
+            url = f"{protocol}://{host}:{port}/api"
             
             # Initialize client
             self.ha_client = HomeAssistantClient(url, token)
@@ -136,12 +220,24 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
     async def _async_call_service(self, domain, service, entity_id=None, **kwargs):
         """Call Home Assistant service (async wrapper)"""
         loop = asyncio.get_event_loop()
-        service_data = kwargs
+        service_data = kwargs.copy()
         if entity_id:
             service_data['entity_id'] = entity_id
+        
+        # Call trigger_service with keyword arguments
         return await loop.run_in_executor(None, 
-                                          self.ha_client.call_service, 
-                                          domain, service, service_data)
+                                          lambda: self.ha_client.trigger_service(domain, service, **service_data))
+    
+    async def _async_call_service_with_response(self, domain, service, entity_id=None, **kwargs):
+        """Call Home Assistant service and get response (async wrapper)"""
+        loop = asyncio.get_event_loop()
+        service_data = kwargs.copy()
+        if entity_id:
+            service_data['entity_id'] = entity_id
+        
+        # Call trigger_service_with_response with keyword arguments
+        return await loop.run_in_executor(None, 
+                                          lambda: self.ha_client.trigger_service_with_response(domain, service, **service_data))
     
     def get_commands(self) -> List[str]:
         """Return list of commands this plugin handles"""
@@ -206,6 +302,8 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             return await self._handle_automation_subcommand(context)
         elif subcmd == "entities":
             return await self._handle_entities_command(context)
+        elif subcmd in ["todos", "todo"]:
+            return await self._handle_todo_subcommand(context)
         else:
             return f"❌ Unknown subcommand: {subcmd}\n\n{self._get_help_text()}"
     
@@ -217,7 +315,7 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             # Count entities by domain
             domains = {}
             for state in states:
-                domain = state['entity_id'].split('.')[0]
+                domain = state.entity_id.split('.')[0]
                 domains[domain] = domains.get(domain, 0) + 1
             
             # Sort by count
@@ -246,29 +344,44 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         """Handle lights subcommand"""
         try:
             states = await self._async_get_states()
-            lights = [s for s in states if s['entity_id'].startswith('light.')]
+            lights = [s for s in states if s.entity_id.startswith('light.')]
             
-            if len(context.args) <= 1:  # Just list lights
+            if len(context.args) <= 1 or (len(context.args) == 2 and context.get_arg(1).lower() == "all"):  # List lights
                 if not lights:
                     return "💡 No lights found"
                 
+                # Check if user wants to see all lights
+                show_all = len(context.args) == 2 and context.get_arg(1).lower() == "all"
+                max_to_show = len(lights) if show_all else self.config.get('max_entities_per_response', 50)
+                
                 response = "💡 **Lights:**\n\n"
-                for light in lights[:self.config.get('max_entities_per_response', 20)]:
-                    entity_id = light['entity_id']
-                    name = light['attributes'].get('friendly_name', entity_id)
-                    state = light['state']
+                for light in lights[:max_to_show]:
+                    entity_id = light.entity_id
+                    name = light.attributes.get('friendly_name', entity_id)
+                    state = light.state
                     icon = "🟡" if state == "on" else "⚫"
-                    response += f"{icon} {name} ({state})\n"
+                    
+                    # Show available aliases
+                    aliases = self._extract_aliases_from_name(name)
+                    if aliases:
+                        alias_text = f" [{', '.join(aliases[:3])}]"  # Show first 3 aliases
+                    else:
+                        alias_text = ""
+                    
+                    response += f"{icon} {name} ({state}){alias_text}\n"
                 
-                if len(lights) > self.config.get('max_entities_per_response', 20):
-                    response += f"\n... and {len(lights) - 20} more lights"
+                if not show_all and len(lights) > max_to_show:
+                    remaining = len(lights) - max_to_show
+                    response += f"\n... and {remaining} more lights\n"
+                    response += f"**Use `!ha lights all` to see all {len(lights)} lights**\n"
                 
-                response += "\n\n**Usage:** `!ha light <name> on/off`"
+                response += "\n**Usage:** `!ha light <name|alias> on/off`\n**Tip:** Use aliases in brackets for easier control"
                 return response
             
             # Control specific light
             light_name = context.get_arg(1).lower()
             action = context.get_arg(2, "").lower()
+            
             
             if not action:
                 return "❌ Please specify 'on' or 'off'"
@@ -276,27 +389,40 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             if action not in ["on", "off"]:
                 return "❌ Action must be 'on' or 'off'"
             
-            # Find matching light
-            matching_light = None
-            for light in lights:
-                entity_id = light['entity_id']
-                friendly_name = light['attributes'].get('friendly_name', '').lower()
-                
-                if (light_name in entity_id.lower() or 
-                    light_name in friendly_name):
-                    matching_light = light
-                    break
+            # Find matching lights using auto-generated aliases
+            matching_lights = self._find_entities_by_alias(lights, light_name)
             
-            if not matching_light:
+            if not matching_lights:
                 return f"❌ Light '{light_name}' not found"
             
-            # Control the light
+            # Control all matching lights
             service = "turn_on" if action == "on" else "turn_off"
-            await self._async_call_service("light", service, matching_light['entity_id'])
-            
-            name = matching_light['attributes'].get('friendly_name', matching_light['entity_id'])
             icon = "🟡" if action == "on" else "⚫"
-            return f"{icon} {name} turned {action}"
+            
+            controlled_lights = []
+            errors = []
+            
+            for light in matching_lights:
+                try:
+                    await self._async_call_service("light", service, light.entity_id)
+                    name = light.attributes.get('friendly_name', light.entity_id)
+                    controlled_lights.append(name)
+                except Exception as e:
+                    name = light.attributes.get('friendly_name', light.entity_id)
+                    errors.append(f"{name}: {str(e)}")
+            
+            # Build response
+            if controlled_lights:
+                if len(controlled_lights) == 1:
+                    return f"{icon} {controlled_lights[0]} turned {action}"
+                else:
+                    lights_list = '\n'.join([f"{icon} {name}" for name in controlled_lights])
+                    response = f"Turned {action} {len(controlled_lights)} lights:\n{lights_list}"
+                    if errors:
+                        response += f"\n\n❌ Errors:\n" + '\n'.join(errors)
+                    return response
+            else:
+                return f"❌ Failed to control lights:\n" + '\n'.join(errors)
             
         except Exception as e:
             return f"❌ Error controlling lights: {str(e)}"
@@ -309,27 +435,41 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         """Handle switches subcommand"""
         try:
             states = await self._async_get_states()
-            switches = [s for s in states if s['entity_id'].startswith('switch.')]
+            switches = [s for s in states if s.entity_id.startswith('switch.')]
             
-            if len(context.args) <= 1:  # Just list switches
+            if len(context.args) <= 1 or (len(context.args) == 2 and context.get_arg(1).lower() == "all"):  # List switches
                 if not switches:
                     return "🔌 No switches found"
                 
+                # Check if user wants to see all switches
+                show_all = len(context.args) == 2 and context.get_arg(1).lower() == "all"
+                max_to_show = len(switches) if show_all else self.config.get('max_entities_per_response', 50)
+                
                 response = "🔌 **Switches:**\n\n"
-                for switch in switches[:self.config.get('max_entities_per_response', 20)]:
-                    entity_id = switch['entity_id']
-                    name = switch['attributes'].get('friendly_name', entity_id)
-                    state = switch['state']
+                for switch in switches[:max_to_show]:
+                    entity_id = switch.entity_id
+                    name = switch.attributes.get('friendly_name', entity_id)
+                    state = switch.state
                     icon = "🟢" if state == "on" else "🔴"
-                    response += f"{icon} {name} ({state})\n"
+                    
+                    # Show available aliases
+                    aliases = self._extract_aliases_from_name(name)
+                    if aliases:
+                        alias_text = f" [{', '.join(aliases[:3])}]"  # Show first 3 aliases
+                    else:
+                        alias_text = ""
+                    
+                    response += f"{icon} {name} ({state}){alias_text}\n"
                 
-                if len(switches) > self.config.get('max_entities_per_response', 20):
-                    response += f"\n... and {len(switches) - 20} more switches"
+                if not show_all and len(switches) > max_to_show:
+                    remaining = len(switches) - max_to_show
+                    response += f"\n... and {remaining} more switches\n"
+                    response += f"**Use `!ha switches all` to see all {len(switches)} switches**\n"
                 
-                response += "\n\n**Usage:** `!ha switch <name> on/off`"
+                response += "\n**Usage:** `!ha switch <name|alias> on/off`\n**Tip:** Use aliases in brackets for easier control"
                 return response
             
-            # Control specific switch (similar logic to lights)
+            # Control specific switch using alias system
             switch_name = context.get_arg(1).lower()
             action = context.get_arg(2, "").lower()
             
@@ -339,27 +479,40 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             if action not in ["on", "off"]:
                 return "❌ Action must be 'on' or 'off'"
             
-            # Find matching switch
-            matching_switch = None
-            for switch in switches:
-                entity_id = switch['entity_id']
-                friendly_name = switch['attributes'].get('friendly_name', '').lower()
-                
-                if (switch_name in entity_id.lower() or 
-                    switch_name in friendly_name):
-                    matching_switch = switch
-                    break
+            # Find matching switches using auto-generated aliases
+            matching_switches = self._find_entities_by_alias(switches, switch_name)
             
-            if not matching_switch:
+            if not matching_switches:
                 return f"❌ Switch '{switch_name}' not found"
             
-            # Control the switch
+            # Control all matching switches
             service = "turn_on" if action == "on" else "turn_off"
-            await self._async_call_service("switch", service, matching_switch['entity_id'])
-            
-            name = matching_switch['attributes'].get('friendly_name', matching_switch['entity_id'])
             icon = "🟢" if action == "on" else "🔴"
-            return f"{icon} {name} turned {action}"
+            
+            controlled_switches = []
+            errors = []
+            
+            for switch in matching_switches:
+                try:
+                    await self._async_call_service("switch", service, switch.entity_id)
+                    name = switch.attributes.get('friendly_name', switch.entity_id)
+                    controlled_switches.append(name)
+                except Exception as e:
+                    name = switch.attributes.get('friendly_name', switch.entity_id)
+                    errors.append(f"{name}: {str(e)}")
+            
+            # Build response
+            if controlled_switches:
+                if len(controlled_switches) == 1:
+                    return f"{icon} {controlled_switches[0]} turned {action}"
+                else:
+                    switches_list = '\n'.join([f"{icon} {name}" for name in controlled_switches])
+                    response = f"Turned {action} {len(controlled_switches)} switches:\n{switches_list}"
+                    if errors:
+                        response += f"\n\n❌ Errors:\n" + '\n'.join(errors)
+                    return response
+            else:
+                return f"❌ Failed to control switches:\n" + '\n'.join(errors)
             
         except Exception as e:
             return f"❌ Error controlling switches: {str(e)}"
@@ -368,7 +521,7 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         """Handle sensors command"""
         try:
             states = await self._async_get_states()
-            sensors = [s for s in states if s['entity_id'].startswith('sensor.')]
+            sensors = [s for s in states if s.entity_id.startswith('sensor.')]
             
             if not sensors:
                 return "📊 No sensors found"
@@ -376,10 +529,10 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             response = "📊 **Sensors:**\n\n"
             
             for sensor in sensors[:self.config.get('max_entities_per_response', 20)]:
-                entity_id = sensor['entity_id']
-                name = sensor['attributes'].get('friendly_name', entity_id)
-                state = sensor['state']
-                unit = sensor['attributes'].get('unit_of_measurement', '')
+                entity_id = sensor.entity_id
+                name = sensor.attributes.get('friendly_name', entity_id)
+                state = sensor.state
+                unit = sensor.attributes.get('unit_of_measurement', '')
                 
                 if unit:
                     state_text = f"{state} {unit}"
@@ -404,7 +557,7 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         """Handle climate subcommand"""
         try:
             states = await self._async_get_states()
-            climate_devices = [s for s in states if s['entity_id'].startswith('climate.')]
+            climate_devices = [s for s in states if s.entity_id.startswith('climate.')]
             
             if len(context.args) <= 1:  # Just list climate devices
                 if not climate_devices:
@@ -412,11 +565,11 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
                 
                 response = "🌡️ **Climate Devices:**\n\n"
                 for device in climate_devices:
-                    entity_id = device['entity_id']
-                    name = device['attributes'].get('friendly_name', entity_id)
-                    current_temp = device['attributes'].get('current_temperature', 'Unknown')
-                    target_temp = device['attributes'].get('temperature', 'Unknown')
-                    state = device['state']
+                    entity_id = device.entity_id
+                    name = device.attributes.get('friendly_name', entity_id)
+                    current_temp = device.attributes.get('current_temperature', 'Unknown')
+                    target_temp = device.attributes.get('temperature', 'Unknown')
+                    state = device.state
                     
                     response += f"🌡️ {name}:\n"
                     response += f"   Current: {current_temp}°\n"
@@ -441,8 +594,8 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             # Find matching climate device
             matching_device = None
             for device in climate_devices:
-                entity_id = device['entity_id']
-                friendly_name = device['attributes'].get('friendly_name', '').lower()
+                entity_id = device.entity_id
+                friendly_name = device.attributes.get('friendly_name', '').lower()
                 
                 if (device_name in entity_id.lower() or 
                     device_name in friendly_name):
@@ -454,10 +607,10 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             
             # Set temperature
             await self._async_call_service("climate", "set_temperature", 
-                                         matching_device['entity_id'], 
+                                         matching_device.entity_id, 
                                          temperature=temp_value)
             
-            name = matching_device['attributes'].get('friendly_name', matching_device['entity_id'])
+            name = matching_device.attributes.get('friendly_name', matching_device.entity_id)
             return f"🌡️ {name} temperature set to {temp_value}°"
             
         except Exception as e:
@@ -471,7 +624,7 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         """Handle automation subcommand"""
         try:
             states = await self._async_get_states()
-            automations = [s for s in states if s['entity_id'].startswith('automation.')]
+            automations = [s for s in states if s.entity_id.startswith('automation.')]
             
             if len(context.args) <= 1:  # Just list automations
                 if not automations:
@@ -479,9 +632,9 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
                 
                 response = "🤖 **Automations:**\n\n"
                 for automation in automations[:self.config.get('max_entities_per_response', 20)]:
-                    entity_id = automation['entity_id']
-                    name = automation['attributes'].get('friendly_name', entity_id)
-                    state = automation['state']
+                    entity_id = automation.entity_id
+                    name = automation.attributes.get('friendly_name', entity_id)
+                    state = automation.state
                     icon = "✅" if state == "on" else "❌"
                     response += f"{icon} {name}\n"
                 
@@ -497,8 +650,8 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             # Find matching automation
             matching_automation = None
             for automation in automations:
-                entity_id = automation['entity_id']
-                friendly_name = automation['attributes'].get('friendly_name', '').lower()
+                entity_id = automation.entity_id
+                friendly_name = automation.attributes.get('friendly_name', '').lower()
                 
                 if (automation_name in entity_id.lower() or 
                     automation_name in friendly_name):
@@ -509,9 +662,9 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
                 return f"❌ Automation '{automation_name}' not found"
             
             # Trigger automation
-            await self._async_call_service("automation", "trigger", matching_automation['entity_id'])
+            await self._async_call_service("automation", "trigger", matching_automation.entity_id)
             
-            name = matching_automation['attributes'].get('friendly_name', matching_automation['entity_id'])
+            name = matching_automation.attributes.get('friendly_name', matching_automation.entity_id)
             return f"🤖 Triggered automation: {name}"
             
         except Exception as e:
@@ -528,7 +681,7 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             # Group by domain
             domains = {}
             for state in states:
-                domain = state['entity_id'].split('.')[0]
+                domain = state.entity_id.split('.')[0]
                 if domain not in domains:
                     domains[domain] = []
                 domains[domain].append(state)
@@ -541,8 +694,8 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             for domain, entities in sorted_domains[:10]:
                 response += f"**{domain.title()}** ({len(entities)}):\n"
                 for entity in entities[:5]:  # Show first 5 entities
-                    name = entity['attributes'].get('friendly_name', entity['entity_id'])
-                    state = entity['state']
+                    name = entity.attributes.get('friendly_name', entity.entity_id)
+                    state = entity.state
                     response += f"  • {name}: {state}\n"
                 
                 if len(entities) > 5:
@@ -558,6 +711,229 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             
         except Exception as e:
             return f"❌ Error listing entities: {str(e)}"
+    
+    async def _handle_todo_subcommand(self, context: CommandContext) -> str:
+        """Handle todo subcommand"""
+        try:
+            states = await self._async_get_states()
+            todo_lists = [s for s in states if s.entity_id.startswith('todo.')]
+            
+            if len(context.args) <= 1:  # List all todo lists
+                if not todo_lists:
+                    return "📋 No todo lists found"
+                
+                response = "📋 **Todo Lists:**\n\n"
+                for todo_list in todo_lists:
+                    entity_id = todo_list.entity_id
+                    name = todo_list.attributes.get('friendly_name', entity_id)
+                    # Use the state as item count (this is the actual count from HA)
+                    item_count = int(todo_list.state) if todo_list.state.isdigit() else 0
+                    
+                    # Show available aliases
+                    aliases = self._extract_aliases_from_name(name)
+                    if aliases:
+                        alias_text = f" [{', '.join(aliases[:3])}]"  # Show first 3 aliases
+                    else:
+                        alias_text = ""
+                    
+                    response += f"📝 {name}: {item_count} items{alias_text}\n"
+                
+                response += "\n**Usage:**\n"
+                response += "• `!ha todo <list|alias>` - Show items in list\n"
+                response += "• `!ha todo <list|alias> add <item>` - Add item\n"
+                response += "• `!ha todo <list|alias> done <item|alias>` - Mark complete\n"
+                response += "• `!ha todo <list|alias> undo <item|alias>` - Mark as pending\n"
+                response += "**Tip:** Use aliases in brackets for easier access to lists and items"
+                return response
+            
+            # Handle specific todo list operations
+            list_name = context.get_arg(1).lower()
+            operation = context.get_arg(2, "").lower()
+            
+            # Find matching todo list using alias system
+            matching_lists = self._find_entities_by_alias(todo_lists, list_name)
+            
+            if not matching_lists:
+                return f"❌ Todo list '{list_name}' not found"
+            
+            if len(matching_lists) > 1:
+                list_names = [l.attributes.get('friendly_name', l.entity_id) for l in matching_lists]
+                return f"❌ Multiple todo lists match '{list_name}': {', '.join(list_names)}"
+            
+            todo_list = matching_lists[0]
+            list_friendly_name = todo_list.attributes.get('friendly_name', todo_list.entity_id)
+            
+            # Just show list contents
+            if not operation:
+                try:
+                    # Get actual items using the service call
+                    items_response = await self._async_call_service_with_response('todo', 'get_items', todo_list.entity_id)
+                    # Response is a tuple: ((), {entity_id: {items: [...]}})
+                    if isinstance(items_response, tuple) and len(items_response) > 1:
+                        response_data = items_response[1]
+                        items = response_data.get(todo_list.entity_id, {}).get('items', [])
+                    else:
+                        items = items_response.get('items', []) if items_response else []
+                except Exception as e:
+                    # Fallback to state count if service call fails
+                    item_count = int(todo_list.state) if todo_list.state.isdigit() else 0
+                    if item_count == 0:
+                        return f"📋 **{list_friendly_name}** is empty"
+                    else:
+                        return f"📋 **{list_friendly_name}** has {item_count} items (details unavailable: {e})"
+                
+                if not items:
+                    return f"📋 **{list_friendly_name}** is empty"
+                
+                response = f"📋 **{list_friendly_name}** ({len(items)} items):\n\n"
+                for i, item in enumerate(items, 1):
+                    status = item.get('status', 'needs_action')
+                    summary = item.get('summary', 'No description')
+                    icon = "✅" if status == 'completed' else "⭕"
+                    
+                    # Show available aliases for each item
+                    aliases = self._extract_aliases_from_name(summary)
+                    if aliases:
+                        alias_text = f" [{', '.join(aliases[:2])}]"  # Show first 2 aliases to keep it compact
+                    else:
+                        alias_text = ""
+                    
+                    response += f"{i}. {icon} {summary}{alias_text}\n"
+                
+                return response
+            
+            # Add item to list
+            elif operation == "add":
+                item_text = " ".join(context.args[3:]) if len(context.args) > 3 else ""
+                if not item_text:
+                    return "❌ Please specify item text to add"
+                
+                await self._async_call_service("todo", "add_item", todo_list.entity_id, item=item_text)
+                return f"✅ Added '{item_text}' to {list_friendly_name}"
+            
+            # Mark item as complete
+            elif operation in ["done", "complete", "finish"]:
+                item_text = " ".join(context.args[3:]) if len(context.args) > 3 else ""
+                if not item_text:
+                    return "❌ Please specify item text to mark as done"
+                
+                # Get current items from the todo list
+                try:
+                    items_response = await self._async_call_service_with_response('todo', 'get_items', todo_list.entity_id)
+                    # Response is a tuple: ((), {entity_id: {items: [...]}})
+                    if isinstance(items_response, tuple) and len(items_response) > 1:
+                        response_data = items_response[1]
+                        items = response_data.get(todo_list.entity_id, {}).get('items', [])
+                    else:
+                        items = items_response.get('items', []) if items_response else []
+                except Exception as e:
+                    return f"❌ Failed to get todo items: {e}"
+                
+                matching_item = None
+                
+                # Try alias-based matching first (like lights/switches)
+                for item in items:
+                    summary = item.get('summary', '')
+                    aliases = self._extract_aliases_from_name(summary)
+                    
+                    # Check if search term matches any alias exactly
+                    if item_text.lower() in [alias.lower() for alias in aliases]:
+                        matching_item = item
+                        break
+                    
+                    # Check exact match on full summary
+                    if summary.lower() == item_text.lower():
+                        matching_item = item
+                        break
+                
+                if not matching_item:
+                    # Try partial match in summary as fallback
+                    for item in items:
+                        summary = item.get('summary', '')
+                        if item_text.lower() in summary.lower():
+                            matching_item = item
+                            break
+                
+                if not matching_item:
+                    return f"❌ Item '{item_text}' not found in {list_friendly_name}"
+                
+                # Check if already completed
+                if matching_item.get('status') == 'completed':
+                    return f"✅ '{matching_item.get('summary')}' is already completed"
+                
+                # Mark as complete
+                item_uid = matching_item.get('uid')
+                if item_uid:
+                    await self._async_call_service("todo", "update_item", todo_list.entity_id, 
+                                                 item=item_uid, status="completed")
+                    return f"✅ Marked '{matching_item.get('summary')}' as complete in {list_friendly_name}"
+                else:
+                    return f"❌ Could not update item (missing UID)"
+            
+            # Mark item as pending (undo)
+            elif operation in ["undo", "pending", "reopen"]:
+                item_text = " ".join(context.args[3:]) if len(context.args) > 3 else ""
+                if not item_text:
+                    return "❌ Please specify item text to mark as pending"
+                
+                # Get current items from the todo list
+                try:
+                    items_response = await self._async_call_service_with_response('todo', 'get_items', todo_list.entity_id)
+                    # Response is a tuple: ((), {entity_id: {items: [...]}})
+                    if isinstance(items_response, tuple) and len(items_response) > 1:
+                        response_data = items_response[1]
+                        items = response_data.get(todo_list.entity_id, {}).get('items', [])
+                    else:
+                        items = items_response.get('items', []) if items_response else []
+                except Exception as e:
+                    return f"❌ Failed to get todo items: {e}"
+                
+                matching_item = None
+                
+                # Try alias-based matching first (like lights/switches)
+                for item in items:
+                    summary = item.get('summary', '')
+                    aliases = self._extract_aliases_from_name(summary)
+                    
+                    # Check if search term matches any alias exactly
+                    if item_text.lower() in [alias.lower() for alias in aliases]:
+                        matching_item = item
+                        break
+                    
+                    # Check exact match on full summary
+                    if summary.lower() == item_text.lower():
+                        matching_item = item
+                        break
+                
+                if not matching_item:
+                    # Try partial match in summary as fallback
+                    for item in items:
+                        summary = item.get('summary', '')
+                        if item_text.lower() in summary.lower():
+                            matching_item = item
+                            break
+                
+                if not matching_item:
+                    return f"❌ Item '{item_text}' not found in {list_friendly_name}"
+                
+                # Check if already pending
+                if matching_item.get('status') == 'needs_action':
+                    return f"⭕ '{matching_item.get('summary')}' is already pending"
+                
+                # Mark as pending
+                item_uid = matching_item.get('uid')
+                if item_uid:
+                    await self._async_call_service("todo", "update_item", todo_list.entity_id, 
+                                                 item=item_uid, status="needs_action")
+                    return f"⭕ Marked '{matching_item.get('summary')}' as pending in {list_friendly_name}"
+                else:
+                    return f"❌ Could not update item (missing UID)"
+            
+            else:
+                return f"❌ Unknown operation '{operation}'. Use: add, done, undo"
+            
+        except Exception as e:
+            return f"❌ Error with todo lists: {str(e)}"
     
     def _get_help_text(self) -> str:
         """Get help text for Home Assistant commands"""
@@ -585,6 +961,13 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
 **Automations:**
 • `!ha automation` - List automations
 • `!ha automation <name>` - Trigger automation
+
+**Todo Lists:**
+• `!ha todos` - List all todo lists
+• `!ha todo <list>` - Show items in specific list
+• `!ha todo <list> add <item>` - Add item to list
+• `!ha todo <list> done <item>` - Mark item complete
+• `!ha todo <list> undo <item>` - Mark item as pending
 
 **Direct Commands:**
 • `!lights`, `!switches`, `!sensors` - Quick access

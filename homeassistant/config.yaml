@@ -3,7 +3,7 @@ homeassistant:
   # Home Assistant Instance Configuration
   host: "${HA_HOST:localhost}"
   port: "${HA_PORT:8123}"
-  token: "${HA_TOKEN:}"  # Long-lived access token
+  token: "${HA_TOKEN:configure_your_token_in_a_secret_or_external_env}"  # Long-lived access token
   ssl: "${HA_SSL:false}"
   
   # Connection Settings
@@ -40,5 +40,5 @@ homeassistant:
     - vacuum
   
   # Response Settings
-  max_entities_per_response: 20
+  max_entities_per_response: 90
   include_state_attributes: false
