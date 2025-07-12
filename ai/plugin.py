@@ -14,15 +14,16 @@ from plugins.universal_plugin_base import UniversalBotPlugin, CommandContext, Bo
 
 
 class UniversalAIPlugin(UniversalBotPlugin):
-    def __init__(self):
-        super().__init__("ai")
+    def __init__(self, logger=None):
+        super().__init__("ai", logger=logger)
         self.version = "2.0.0"  # Updated for universal support
         self.description = "Universal AI-powered features including magic 8-ball, advice, and content generation"
         
         # This plugin supports all platforms
         self.supported_platforms = [BotPlatform.MATRIX, BotPlatform.SIMPLEX]
         
-        self.logger = logging.getLogger(f"plugin.{self.name}")
+        if not self.logger:
+            self.logger = logging.getLogger(f"plugin.{self.name}")
         
         # AI configuration
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")

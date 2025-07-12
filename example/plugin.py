@@ -13,8 +13,8 @@ from plugins.universal_plugin_base import UniversalBotPlugin, CommandContext, Bo
 
 
 class UniversalExamplePlugin(UniversalBotPlugin):
-    def __init__(self):
-        super().__init__("example")
+    def __init__(self, logger=None):
+        super().__init__("example", logger=logger)
         self.version = "2.0.0"  # Updated for universal support
         self.description = "Universal example plugin that works across bot platforms"
         
@@ -25,7 +25,8 @@ class UniversalExamplePlugin(UniversalBotPlugin):
         # Define which platforms this plugin supports
         self.supported_platforms = [BotPlatform.MATRIX, BotPlatform.SIMPLEX]
         
-        self.logger = logging.getLogger(f"plugin.{self.name}")
+        if not self.logger:
+            self.logger = logging.getLogger(f"plugin.{self.name}")
         
         # Plugin-specific configuration
         self.demo_mode = True

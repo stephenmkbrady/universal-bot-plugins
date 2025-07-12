@@ -16,15 +16,16 @@ from plugins.universal_plugin_base import UniversalBotPlugin, CommandContext, Bo
 
 
 class UniversalAuthPlugin(UniversalBotPlugin):
-    def __init__(self):
-        super().__init__("auth")
+    def __init__(self, logger=None):
+        super().__init__("auth", logger=logger)
         self.version = "2.0.0"  # Updated for universal support
         self.description = "Universal PIN authentication for database access - Request PINs for rooms"
         
         # This plugin supports all platforms
         self.supported_platforms = [BotPlatform.MATRIX, BotPlatform.SIMPLEX]
         
-        self.logger = logging.getLogger(f"plugin.{self.name}")
+        if not self.logger:
+            self.logger = logging.getLogger(f"plugin.{self.name}")
         
         # API configuration
         self.api_base_url = None

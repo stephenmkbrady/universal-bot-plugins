@@ -13,8 +13,8 @@ from plugins.universal_plugin_base import UniversalBotPlugin, CommandContext, Bo
 
 
 class UniversalCorePlugin(UniversalBotPlugin):
-    def __init__(self):
-        super().__init__("core")
+    def __init__(self, logger=None):
+        super().__init__("core", logger=logger)
         self.version = "2.0.0"  # Updated for universal support
         self.description = "Universal core bot commands (help, status, ping, plugin management)"
         
@@ -24,7 +24,8 @@ class UniversalCorePlugin(UniversalBotPlugin):
         # Supports all platforms
         self.supported_platforms = [BotPlatform.MATRIX, BotPlatform.SIMPLEX]
         
-        self.logger = logging.getLogger(f"plugin.{self.name}")
+        if not self.logger:
+            self.logger = logging.getLogger(f"plugin.{self.name}")
         self.start_time = datetime.now()
     
     async def initialize(self, adapter) -> bool:
