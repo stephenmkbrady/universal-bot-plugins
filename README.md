@@ -5,7 +5,7 @@ A collection of universal plugins that work across multiple bot platforms (Matri
 ## 🔌 Available Plugins
 
 ### Core Plugins
-- **core** - Essential bot commands (help, status, ping, plugin management)
+- **core** - Essential bot commands (ping, uptime, plugin management)
 - **example** - Template plugin for developers
 
 ### Feature Plugins  
@@ -17,8 +17,6 @@ A collection of universal plugins that work across multiple bot platforms (Matri
 ## 📋 Plugin Commands & Features
 
 ### Core Plugin Commands
-- `!help` - Show comprehensive help with all available commands
-- `!status` - Display bot status, uptime, and plugin health
 - `!ping` - Test bot responsiveness
 - `!uptime` - Show how long the bot has been running
 - `!plugins` - List all loaded plugins with status
@@ -27,7 +25,9 @@ A collection of universal plugins that work across multiple bot platforms (Matri
 - `!disable <plugin>` - Disable a plugin (core cannot be disabled)
 - `!platform` - Show platform-specific information
 - `!commands` - List all available commands across plugins
-- `!info` - Show detailed bot information
+
+### Bot Core Commands
+- `!help` - Show comprehensive help with bot information and all available plugin commands
 
 ### YouTube Plugin Commands
 - `!youtube <url>` - Process and summarize YouTube videos with AI
@@ -122,8 +122,8 @@ A collection of universal plugins that work across multiple bot platforms (Matri
 
 ### Bot Management
 ```
-# Check bot status
-!status
+# Check bot status and get help
+!help
 !plugins
 !uptime
 
@@ -138,9 +138,9 @@ A collection of universal plugins that work across multiple bot platforms (Matri
 # Test bot responsiveness
 !ping
 
-# Get platform information
+# Get platform information and help
 !platform
-!info
+!help
 
 # Echo test with platform details
 !echo Hello from SimpleX!

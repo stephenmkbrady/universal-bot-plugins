@@ -46,7 +46,7 @@ class UniversalCorePlugin(UniversalBotPlugin):
     def get_commands(self) -> List[str]:
         """Return list of commands this plugin handles"""
         return [
-            "help", "ping", "status", "uptime",
+            "ping", "uptime",
             "plugins", "reload", "enable", "disable",
             "platform", "commands"
         ]
@@ -56,12 +56,8 @@ class UniversalCorePlugin(UniversalBotPlugin):
         self.logger.info(f"Handling {context.command} command from {context.user_display_name} on {context.platform.value}")
         
         try:
-            if context.command == "help":
-                return await self._handle_help_command(context)
-            elif context.command == "ping":
+            if context.command == "ping":
                 return await self._handle_ping(context)
-            elif context.command == "status":
-                return await self._handle_info(context)  # Renamed info to status
             elif context.command == "uptime":
                 return await self._handle_uptime(context)
             elif context.command == "plugins":
@@ -83,59 +79,6 @@ class UniversalCorePlugin(UniversalBotPlugin):
         
         return None
     
-    async def _handle_help_command(self, context: CommandContext) -> str:
-        """Generate comprehensive help with all available commands"""
-        try:
-            # Get plugin manager from adapter
-            plugin_manager = getattr(self.adapter.bot, 'plugin_manager', None)
-            if not plugin_manager:
-                return "❌ Plugin manager not available"
-            
-            # Group commands by plugin
-            commands_by_plugin = {}
-            for plugin_name, plugin in plugin_manager.plugins.items():
-                if plugin.enabled:
-                    commands_by_plugin[plugin_name] = {
-                        'commands': plugin.get_commands(),
-                        'description': plugin.description,
-                        'version': plugin.version
-                    }
-            
-            help_text = f"""🤖 **Bot Help - {context.platform.value.title()} Platform**
-
-**Core Commands:**
-• `!help` - Show this help message
-• `!status` - Show detailed bot information and status
-• `!ping` - Test bot responsiveness
-• `!uptime` - Show how long bot has been running
-• `!plugins` - List all loaded plugins
-• `!commands` - List all available commands
-• `!platform` - Show platform information
-
-**Plugin Management:**
-• `!reload <plugin>` - Reload a specific plugin
-• `!enable <plugin>` - Enable a plugin
-• `!disable <plugin>` - Disable a plugin
-
-**Available Plugins:**"""
-            
-            for plugin_name, plugin_info in commands_by_plugin.items():
-                if plugin_name != 'core':  # Don't repeat core commands
-                    commands_str = ', '.join([f"`!{cmd}`" for cmd in plugin_info['commands']])
-                    help_text += f"\n\n**{plugin_name.title()} Plugin** (v{plugin_info['version']}):\n"
-                    help_text += f"*{plugin_info['description']}*\n"
-                    help_text += f"Commands: {commands_str}"
-            
-            help_text += f"\n\n💡 **Tips:**\n"
-            help_text += f"• All commands start with `!`\n"
-            help_text += f"• Commands are case-sensitive\n"
-            help_text += f"• Use `!help` anytime for this message"
-            
-            return help_text
-            
-        except Exception as e:
-            self.logger.error(f"Error generating help: {e}")
-            return "❌ Error generating help information"
     
     async def _handle_ping(self, context: CommandContext) -> str:
         """Handle ping command"""
@@ -310,55 +253,6 @@ class UniversalCorePlugin(UniversalBotPlugin):
             self.logger.error(f"Error listing commands: {e}")
             return "❌ Error retrieving command list"
     
-    async def _handle_info(self, context: CommandContext) -> str:
-        """Show detailed bot information"""
-        try:
-            plugin_manager = getattr(self.adapter.bot, 'plugin_manager', None)
-            uptime = datetime.now() - self.start_time
-            
-            info_text = f"""ℹ️ **Bot Information**
-
-**Basic Info:**
-• Platform: {context.platform.value.title()}
-• Core Version: {self.version}
-• Started: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}
-• Uptime: {str(uptime).split('.')[0]}
-
-**User Context:**
-• Your ID: {context.user_id}
-• Display Name: {context.user_display_name}
-• Chat ID: {context.chat_id}"""
-            
-            if plugin_manager:
-                status = plugin_manager.get_plugin_status()
-                info_text += f"""
-
-**Plugin System:**
-• Loaded Plugins: {status['total_loaded']}
-• Failed Plugins: {status['total_failed']}
-• Hot Reloading: {'🔥 Active' if status['hot_reloading'] else '❄️ Inactive'}
-• Total Commands: {len(plugin_manager.get_all_commands())}"""
-            
-            # Platform-specific info
-            if context.platform == BotPlatform.SIMPLEX:
-                bot_instance = getattr(self.adapter, 'bot_instance', None)
-                if bot_instance:
-                    # Check WebSocket status
-                    ws_status = "🟢 Connected" if (hasattr(bot_instance, 'websocket_manager') and 
-                                                  bot_instance.websocket_manager.websocket) else "🔴 Disconnected"
-                    
-                    info_text += f"""
-
-**SimpleX Configuration:**
-• Bot Name: {getattr(bot_instance, 'config', {}).get('name', 'SimpleX Bot')}
-• WebSocket: {ws_status} ({getattr(bot_instance.websocket_manager, 'websocket_url', 'N/A') if hasattr(bot_instance, 'websocket_manager') else 'N/A'})
-• Contacts: Use `!contacts list` for live contact info"""
-            
-            return info_text
-            
-        except Exception as e:
-            self.logger.error(f"Error getting bot info: {e}")
-            return "❌ Error retrieving bot information"
     
     
     async def cleanup(self):
