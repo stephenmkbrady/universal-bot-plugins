@@ -9,6 +9,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 *.pyc
+__pycache__
 build/
 develop-eggs/
 dist/
@@ -158,3 +159,4 @@ Thumbs.db
 *.yaml.bak
 *.yml.bak
 config.yaml.backup
+ai/__pycache__/plugin.cpython-311.pyc

@@ -1,0 +1,44 @@
+# Home Assistant Plugin Configuration
+homeassistant:
+  # Home Assistant Instance Configuration
+  host: "${HA_HOST:localhost}"
+  port: "${HA_PORT:8123}"
+  token: "${HA_TOKEN:}"  # Long-lived access token
+  ssl: "${HA_SSL:false}"
+  
+  # Connection Settings
+  timeout: 30
+  verify_ssl: true
+  
+  # Command Settings
+  command_prefix: "ha"
+  admin_only: false
+  
+  # Entity Categories to expose via commands
+  entities:
+    lights: true
+    switches: true
+    sensors: true
+    automation: true
+    climate: true
+    cover: true
+    fan: true
+    lock: true
+    media_player: true
+    vacuum: true
+  
+  # Security Settings
+  allowed_domains:
+    - light
+    - switch
+    - automation
+    - climate
+    - cover
+    - fan
+    - lock
+    - media_player
+    - vacuum
+  
+  # Response Settings
+  max_entities_per_response: 20
+  include_state_attributes: false
