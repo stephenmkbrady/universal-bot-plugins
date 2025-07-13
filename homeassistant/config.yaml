@@ -10,6 +10,11 @@ homeassistant:
   timeout: 30
   verify_ssl: true
   
+  # Cache Settings
+  enable_cache: "${HA_ENABLE_CACHE:false}"  # Enable/disable API response caching (30 second cache)
+  # When enabled: Better performance, less bandwidth usage
+  # When disabled: Real-time updates, new/deleted entities appear immediately
+  
   # Command Settings
   command_prefix: "ha"
   admin_only: false

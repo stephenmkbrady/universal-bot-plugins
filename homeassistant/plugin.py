@@ -28,6 +28,10 @@ Commands:
 - !ha todo <list> add <item> - Add item to todo list
 - !ha todo <list> done <item> - Mark item as complete
 - !ha todo <list> undo <item> - Mark completed item as todo
+- !ha connections - Show Ping(ICMP) sensor status
+- !ha wake - List Wake on LAN buttons
+- !ha wake list - List Wake on LAN buttons
+- !ha wake <button> - Send Wake on LAN signal
 """
 
 from typing import List, Optional, Dict, Any
@@ -94,13 +98,14 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         return re.sub(pattern, replace_var, content)
     
     def _extract_aliases_from_name(self, name: str) -> List[str]:
-        """Extract potential aliases from a light's friendly name"""
+        """Extract potential aliases from entity names (lights, switches, wake buttons, etc.)"""
         if not name:
             return []
         
         # Common words to filter out
         stop_words = {
-            'light', 'lamp', 'bulb', 'switch', 'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for'
+            'light', 'lamp', 'bulb', 'switch', 'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for',
+            'wake', 'wol', 'lan', 'button', 'sensor', 'ping', 'icmp', 'binary', 'todo', 'list'
         }
         
         # Split name into words and clean them
@@ -191,8 +196,24 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             protocol = 'https' if ssl else 'http'
             url = f"{protocol}://{host}:{port}/api"
             
-            # Initialize client
-            self.ha_client = HomeAssistantClient(url, token)
+            # Configure caching based on user preference
+            cache_enabled = self.config.get('enable_cache', False)
+            # Convert string 'false'/'true' to boolean if needed
+            if isinstance(cache_enabled, str):
+                cache_enabled = cache_enabled.lower() in ('true', '1', 'yes', 'on')
+            else:
+                cache_enabled = bool(cache_enabled)
+            
+            self.logger.info(f"Home Assistant API caching: {'enabled' if cache_enabled else 'disabled'}")
+            
+            # Initialize client with configurable caching
+            # When enabled: Better performance, 30-second cache, less bandwidth
+            # When disabled: Real-time updates, new/deleted entities appear immediately
+            self.ha_client = HomeAssistantClient(
+                url, 
+                token, 
+                cache_session=cache_enabled  # Use configured caching preference
+            )
             
             # Test connection
             try:
@@ -304,6 +325,10 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             return await self._handle_entities_command(context)
         elif subcmd in ["todos", "todo"]:
             return await self._handle_todo_subcommand(context)
+        elif subcmd == "connections":
+            return await self._handle_connections_command(context)
+        elif subcmd == "wake":
+            return await self._handle_wake_command(context)
         else:
             return f"❌ Unknown subcommand: {subcmd}\n\n{self._get_help_text()}"
     
@@ -975,6 +1000,229 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         except Exception as e:
             return f"❌ Error with todo lists: {str(e)}"
     
+    async def _handle_connections_command(self, context: CommandContext) -> str:
+        """Handle connections command - show Ping(ICMP) sensor status"""
+        try:
+            states = await self._async_get_states()
+            
+            # Find binary sensors related to Ping(ICMP) integration
+            # These typically have entity IDs like binary_sensor.ping_<hostname>
+            # or contain "ping" in their integration/device info
+            ping_sensors = []
+            
+            for state in states:
+                entity_id = state.entity_id
+                
+                # Filter for binary sensors first
+                if not entity_id.startswith('binary_sensor.'):
+                    continue
+                
+                # Check if it's a ping sensor by entity ID pattern
+                if 'ping' in entity_id.lower():
+                    ping_sensors.append(state)
+                    continue
+                
+                # Check device/integration info for Ping(ICMP) integration
+                device_class = state.attributes.get('device_class')
+                source_type = state.attributes.get('source_type')
+                integration = state.attributes.get('integration', '')
+                platform = state.attributes.get('platform', '')
+                
+                # Common patterns for ping sensors
+                if (device_class == 'connectivity' or 
+                    source_type == 'ping' or
+                    integration.lower() == 'ping' or
+                    platform.lower() == 'ping' or
+                    'ping' in str(state.attributes.get('attribution', '')).lower()):
+                    ping_sensors.append(state)
+            
+            if not ping_sensors:
+                return "🌐 No Ping(ICMP) connection sensors found"
+            
+            response = "🌐 **Network Connections (Ping/ICMP Status):**\n\n"
+            
+            # Sort by status (online first) then by name
+            ping_sensors.sort(key=lambda x: (x.state != 'on', x.attributes.get('friendly_name', x.entity_id).lower()))
+            
+            for sensor in ping_sensors:
+                entity_id = sensor.entity_id
+                name = sensor.attributes.get('friendly_name', entity_id)
+                state = sensor.state
+                
+                # Status icons
+                if state == 'on':
+                    icon = "🟢"
+                    status_text = "Online"
+                elif state == 'off':
+                    icon = "🔴"
+                    status_text = "Offline"
+                else:
+                    icon = "❓"
+                    status_text = f"Unknown ({state})"
+                
+                # Try to get additional info like IP address from attributes
+                ip_address = sensor.attributes.get('ip_address', '')
+                last_changed = sensor.last_changed if hasattr(sensor, 'last_changed') else None
+                
+                response += f"{icon} **{name}**: {status_text}"
+                
+                if ip_address:
+                    response += f" ({ip_address})"
+                
+                response += "\n"
+            
+            response += f"\n**Total:** {len(ping_sensors)} monitored connections"
+            return response
+            
+        except Exception as e:
+            return f"❌ Error getting connection status: {str(e)}"
+    
+    async def _handle_wake_command(self, context: CommandContext) -> str:
+        """Handle wake command - list or trigger Wake on LAN buttons"""
+        try:
+            states = await self._async_get_states()
+            
+            # Find Wake on LAN buttons - these are typically button entities
+            # with names containing "wake" or from wake_on_lan integration
+            wake_buttons = []
+            
+            for state in states:
+                entity_id = state.entity_id
+                
+                # Filter for button entities first
+                if not entity_id.startswith('button.'):
+                    continue
+                
+                # Check if it's a wake on lan button
+                entity_lower = entity_id.lower()
+                name_lower = state.attributes.get('friendly_name', '').lower()
+                integration = state.attributes.get('integration', '').lower()
+                device_class = state.attributes.get('device_class', '').lower()
+                
+                if ('wake' in entity_lower or 
+                    'wol' in entity_lower or
+                    'wake' in name_lower or
+                    'wol' in name_lower or
+                    integration == 'wake_on_lan' or
+                    device_class == 'restart'):  # Some WoL buttons use restart device class
+                    wake_buttons.append(state)
+            
+            # Handle subcommands
+            if len(context.args) <= 1:  # Just "!ha wake" - list all wake buttons
+                if not wake_buttons:
+                    return "💤 No Wake on LAN buttons found"
+                
+                response = "💤 **Wake on LAN Buttons:**\n\n"
+                
+                for i, button in enumerate(wake_buttons, 1):
+                    entity_id = button.entity_id
+                    name = button.attributes.get('friendly_name', entity_id)
+                    
+                    # Try to get MAC address or target info from attributes
+                    mac_address = button.attributes.get('mac_address', '')
+                    target_host = button.attributes.get('host', button.attributes.get('target', ''))
+                    
+                    response += f"{i}. **{name}**"
+                    
+                    if mac_address:
+                        response += f"\n   MAC: {mac_address}"
+                    if target_host:
+                        response += f"\n   Target: {target_host}"
+                    
+                    response += "\n\n"
+                
+                response += f"**Usage:** `!ha wake <number>` or `!ha wake <button_name>`\n"
+                response += f"**Examples:** `!ha wake 1`, `!ha wake 2`, `!ha wake FRITZ!Box`"
+                return response
+            
+            elif context.get_arg(1).lower() == "list":  # "!ha wake list" - same as above
+                return await self._handle_wake_command(CommandContext(
+                    command=context.command,
+                    args=["wake"],  # Remove "list" argument
+                    args_raw=context.args_raw,
+                    user_id=context.user_id,
+                    chat_id=context.chat_id,
+                    user_display_name=context.user_display_name,
+                    platform=context.platform,
+                    raw_message=context.raw_message
+                ))
+            
+            else:  # "!ha wake <button_name_or_number>" - trigger specific wake button
+                button_input = context.get_arg(1)
+                
+                # Check if input is a number
+                try:
+                    button_number = int(button_input)
+                    if 1 <= button_number <= len(wake_buttons):
+                        # Use the button at the specified index (1-based)
+                        wake_button = wake_buttons[button_number - 1]
+                        button_friendly_name = wake_button.attributes.get('friendly_name', wake_button.entity_id)
+                        
+                        # Press the button (button entities use the "press" service)
+                        await self._async_call_service("button", "press", wake_button.entity_id)
+                        
+                        # Get additional info for response
+                        mac_address = wake_button.attributes.get('mac_address', '')
+                        target_host = wake_button.attributes.get('host', wake_button.attributes.get('target', ''))
+                        
+                        response = f"💤 **Wake on LAN signal sent!**\n\n"
+                        response += f"🖥️ **Target:** {button_friendly_name}\n"
+                        
+                        if mac_address:
+                            response += f"📱 **MAC:** {mac_address}\n"
+                        if target_host:
+                            response += f"🌐 **Host:** {target_host}\n"
+                        
+                        response += f"\n✅ Wake signal has been transmitted"
+                        
+                        return response
+                    else:
+                        return f"❌ Invalid button number. Please use 1-{len(wake_buttons)} or button name."
+                        
+                except ValueError:
+                    # Not a number, try name matching
+                    button_name = button_input.lower()
+                    
+                    # Find matching wake button using alias system
+                    matching_buttons = self._find_entities_by_alias(wake_buttons, button_name)
+                    
+                    if not matching_buttons:
+                        return f"❌ Wake on LAN button '{button_name}' not found"
+                    
+                    if len(matching_buttons) > 1:
+                        response = f"❌ Multiple Wake on LAN buttons match '{button_name}':\n\n"
+                        for i, button in enumerate(matching_buttons, 1):
+                            name = button.attributes.get('friendly_name', button.entity_id)
+                            response += f"{i}. {name}\n"
+                        response += f"\nPlease be more specific with the button name or use a number from the list above."
+                        return response
+                    
+                    # Trigger the wake button
+                    wake_button = matching_buttons[0]
+                    button_friendly_name = wake_button.attributes.get('friendly_name', wake_button.entity_id)
+                    
+                    # Press the button (button entities use the "press" service)
+                    await self._async_call_service("button", "press", wake_button.entity_id)
+                    
+                    # Get additional info for response
+                    mac_address = wake_button.attributes.get('mac_address', '')
+                    target_host = wake_button.attributes.get('host', wake_button.attributes.get('target', ''))
+                    
+                    response = f"💤 **Wake on LAN signal sent!**\n\n"
+                    response += f"🖥️ **Target:** {button_friendly_name}\n"
+                    
+                    if mac_address:
+                        response += f"📱 **MAC:** {mac_address}\n"
+                    if target_host:
+                        response += f"🌐 **Host:** {target_host}\n"
+                    
+                    response += f"\n✅ Wake signal has been transmitted"
+                    
+                    return response
+                
+        except Exception as e:
+            return f"❌ Error with Wake on LAN: {str(e)}"
+    
     def _get_help_text(self) -> str:
         """Get help text for Home Assistant commands"""
         return """🏠 **Home Assistant Commands:**
@@ -1009,11 +1257,20 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
 • `!ha todo <list> done <item>` - Mark item complete
 • `!ha todo <list> undo <item>` - Mark item as pending
 
+**Network & Wake on LAN:**
+• `!ha connections` - Show Ping(ICMP) sensor status
+• `!ha wake` - List Wake on LAN buttons
+• `!ha wake list` - List Wake on LAN buttons
+• `!ha wake <button>` - Send Wake on LAN signal
+
 **Direct Commands:**
 • `!lights`, `!switches`, `!sensors` - Quick access
 • `!climate`, `!automation`, `!entities` - Quick access
 
-Configure your Home Assistant connection in the plugin config file."""
+**Configuration:**
+Configure your Home Assistant connection and caching preference in the plugin config file.
+• Cache enabled: Better performance, 30-second cache
+• Cache disabled: Real-time updates, immediate entity changes"""
 
     async def cleanup(self):
         """Cleanup plugin resources"""
