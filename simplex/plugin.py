@@ -246,7 +246,7 @@ Invite expiry: {stats['invite_expiry_hours']} hours"""
                     response_text = "No contacts found."
                 
                 # Send response directly through WebSocket manager
-                await self.bot_instance.websocket_manager.send_message(context.user_display_name, response_text)
+                await self.adapter.send_message(response_text, context)
                 self.logger.info(f"🔔 CALLBACK: Response sent successfully")
                 
             except Exception as e:
@@ -346,7 +346,7 @@ Invite expiry: {stats['invite_expiry_hours']} hours"""
                     response_text = "No groups found."
                 
                 # Send response directly through WebSocket manager
-                await self.bot_instance.websocket_manager.send_message(context.user_display_name, response_text)
+                await self.adapter.send_message(response_text, context)
                 self.logger.info(f"🔔 GROUPS CALLBACK: Response sent successfully")
                 
             except Exception as e:
