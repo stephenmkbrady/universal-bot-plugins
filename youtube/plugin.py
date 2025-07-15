@@ -46,12 +46,12 @@ class UniversalYouTubePlugin(UniversalBotPlugin):
     def get_youtube_patterns(cls) -> List[str]:
         """Get all supported YouTube URL patterns"""
         return [
-            r'((?:https?://)?(?:www\.)?youtube\.com/watch\?v=([a-zA-Z0-9_-]+))',
-            r'((?:https?://)?(?:www\.)?youtu\.be/([a-zA-Z0-9_-]+))',
-            r'((?:https?://)?(?:www\.)?youtube\.com/embed/([a-zA-Z0-9_-]+))',
-            r'((?:https?://)?(?:www\.)?youtube\.com/v/([a-zA-Z0-9_-]+))',
-            r'((?:https?://)?(?:www\.)?m\.youtube\.com/watch\?v=([a-zA-Z0-9_-]+))',
-            r'((?:https?://)?(?:www\.)?youtube\.com/shorts/([a-zA-Z0-9_-]+))'
+            r'((?:https?://)?(?:www\.)?youtube\.com/watch\?v=[a-zA-Z0-9_-]+(?:[&?][^\s]*)?)',
+            r'((?:https?://)?(?:www\.)?youtu\.be/[a-zA-Z0-9_-]+(?:[&?][^\s]*)?)',
+            r'((?:https?://)?(?:www\.)?youtube\.com/embed/[a-zA-Z0-9_-]+(?:[&?][^\s]*)?)',
+            r'((?:https?://)?(?:www\.)?youtube\.com/v/[a-zA-Z0-9_-]+(?:[&?][^\s]*)?)',
+            r'((?:https?://)?(?:www\.)?m\.youtube\.com/watch\?v=[a-zA-Z0-9_-]+(?:[&?][^\s]*)?)',
+            r'((?:https?://)?(?:www\.)?youtube\.com/shorts/[a-zA-Z0-9_-]+(?:[&?][^\s]*)?)'
         ]
     
     def _load_config(self) -> Dict[str, Any]:
@@ -936,8 +936,12 @@ Provide a helpful, accurate answer based on the content. If the information isn'
                 async with session.post(url, headers=headers, json=data) as response:
                     if response.status == 200:
                         result = await response.json()
-                        return result['choices'][0]['message']['content'].strip()
+                        content = result['choices'][0]['message']['content'].strip()
+                        self.logger.info(f"✅ Q&A API success with {qa_model} ({len(content)} chars)")
+                        return content
                     else:
+                        error_text = await response.text()
+                        self.logger.error(f"❌ Q&A API error {response.status} with {qa_model}: {error_text}")
                         return "❌ Failed to process question with AI"
                         
         except Exception as e:
