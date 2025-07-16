@@ -1,0 +1,26 @@
+# STT OpenAI Plugin Configuration
+
+openai:
+  # OpenAI API configuration
+  api_key: ${OPENAI_API_KEY} # Set in environment variables
+  model: "whisper-1"  # OpenAI Whisper model
+  
+  # Request timeout in seconds
+  timeout: 30
+  
+  # Transcription language (auto, en, es, fr, de, etc.)
+  language: "auto"
+  
+  # Response format (json, text, srt, verbose_json, vtt)
+  response_format: "json"
+
+# Processing settings
+processing:
+  # Maximum audio file size in bytes (25MB for OpenAI)
+  max_file_size: 26214400
+  
+  # Supported audio formats
+  supported_formats: ["m4a", "wav", "mp3", "mp4", "mpeg", "mpga", "ogg", "webm"]
+  
+  # Temporary directory for audio processing
+  temp_dir: "/tmp/stt_openai"
