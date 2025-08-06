@@ -105,13 +105,15 @@ class KrumblePluginAPIServer {
             }
         });
         
-        // Get cached data
-        this.app.get('/data', (req, res) => {
+        // Get cached data for a specific channel
+        this.app.get('/data/:channelUrl', (req, res) => {
             try {
-                const cachedData = this.scraper.loadPreviousData();
+                const channelUrl = decodeURIComponent(req.params.channelUrl);
+                const cachedData = this.scraper.loadPreviousData(channelUrl);
                 res.json({
                     success: true,
                     data: cachedData,
+                    channelUrl: channelUrl,
                     timestamp: new Date().toISOString()
                 });
             } catch (error) {
@@ -143,7 +145,7 @@ class KrumblePluginAPIServer {
                     'GET /status', 
                     'POST /scrape',
                     'GET /scrape/:channel',
-                    'GET /data'
+                    'GET /data/:channelUrl'
                 ],
                 timestamp: new Date().toISOString()
             });
@@ -158,7 +160,7 @@ class KrumblePluginAPIServer {
             console.log(`   GET  /status - Service status`);
             console.log(`   POST /scrape - Scrape channel with change detection`);
             console.log(`   GET  /scrape/:channel - Manual scrape specific channel`);
-            console.log(`   GET  /data - Get cached data`);
+            console.log(`   GET  /data/:channelUrl - Get cached data for channel`);
         });
         
         // Graceful shutdown

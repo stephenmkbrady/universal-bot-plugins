@@ -635,6 +635,10 @@ Pending requests: {len(ws_manager.pending_requests)}"""
     
     async def _handle_admin_command(self, context: CommandContext) -> str:
         """Handle admin management commands"""
+        # Debug logging to track the admin check issue
+        self.logger.info(f"Handling admin command from {context.user_display_name} on {context.platform.value}")
+        self.logger.info(f"🔍 ADMIN DEBUG: user_id='{context.user_id}', user_display_name='{context.user_display_name}', chat_id='{context.chat_id}'")
+        
         # Check admin permissions
         if not self.admin_manager.is_admin(context.user_display_name):
             return "Access denied. Only admins can use admin commands."

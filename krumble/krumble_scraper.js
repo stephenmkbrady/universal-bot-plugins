@@ -15,6 +15,50 @@ if (typeof globalThis.fetch === 'undefined') {
     fetch = globalThis.fetch;
 }
 
+// Constants
+const BROWSER_TIMEOUT = 30000;
+const CONTENT_LOAD_DELAY = 5000;
+const KICK_BROWSER_TIMEOUT = 15000;
+const KICK_CONTENT_DELAY = 3000;
+
+const USER_AGENTS = [
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 14; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
+
+const BROWSER_ARGS = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-web-security'
+];
+
+// Selectors for different platforms
+const RUMBLE_SELECTORS = [
+    'article[data-js="videoListing"]',
+    '.video-listing-entry',
+    '.video-item',
+    '[data-testid="video"]',
+    '.listing-video',
+    '.video-card',
+    '.mediaItem',
+    '.media-item', 
+    '[class*="video"]',
+    '[class*="media"]',
+    'article',
+    '.thumbnail-wrapper',
+    '.video-thumbnail'
+];
+
+const KICK_SELECTORS = [
+    '[data-testid="video-card"]',
+    '.video-card',
+    '[class*="video"]',
+    'a[href*="/video/"]',
+    'article'
+];
+
 class KrumbleScraper {
     constructor() {
         this.dataDir = path.join(__dirname, 'channel_data');
@@ -85,46 +129,24 @@ class KrumbleScraper {
         try {
             browser = await puppeteer.launch({
                 headless: 'new',
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-web-security'
-                ]
+                args: BROWSER_ARGS
             });
 
             const page = await browser.newPage();
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+            await page.setUserAgent(USER_AGENTS[2]); // Use desktop Chrome
             
             console.log(`🌐 Navigating to: ${channelUrl}`);
             await page.goto(channelUrl, { 
                 waitUntil: 'networkidle2', 
-                timeout: 30000 
+                timeout: BROWSER_TIMEOUT 
             });
 
             // Wait for content to load
-            await new Promise(resolve => setTimeout(resolve, 5000));
-
-            // Rumble-specific selectors (reuse existing logic)
-            const livestreamSelectors = [
-                'article[data-js="videoListing"]',
-                '.video-listing-entry',
-                '.video-item',
-                '[data-testid="video"]',
-                '.listing-video',
-                '.video-card',
-                '.mediaItem',
-                '.media-item', 
-                '[class*="video"]',
-                '[class*="media"]',
-                'article',
-                '.thumbnail-wrapper',
-                '.video-thumbnail'
-            ];
+            await new Promise(resolve => setTimeout(resolve, CONTENT_LOAD_DELAY));
 
             let livestreams = [];
             
-            for (const selector of livestreamSelectors) {
+            for (const selector of RUMBLE_SELECTORS) {
                 try {
                     const elements = await page.$$(selector);
                     if (elements.length > 0) {
@@ -269,11 +291,6 @@ class KrumbleScraper {
             `https://kick.com/api/v1/channels/${channelSlug}`,
         ];
 
-        const userAgents = [
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
-            'Mozilla/5.0 (Linux; Android 14; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        ];
 
         let livestreams = [];
         let channelData = null;
@@ -285,7 +302,7 @@ class KrumbleScraper {
                 
                 const response = await fetch(endpoint, {
                     headers: {
-                        'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
+                        'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
                         'Accept': 'application/json',
                         'Accept-Language': 'en-US,en;q=0.9',
                         'Accept-Encoding': 'gzip, deflate, br',
@@ -347,7 +364,7 @@ class KrumbleScraper {
                 
                 const response = await fetch(endpoint, {
                     headers: {
-                        'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
+                        'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
                         'Accept': 'application/json',
                         'Accept-Language': 'en-US,en;q=0.9',
                         'Referer': `https://kick.com/${channelSlug}`
@@ -404,21 +421,16 @@ class KrumbleScraper {
         try {
             browser = await puppeteer.launch({
                 headless: 'new',
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-web-security'
-                ]
+                args: BROWSER_ARGS
             });
 
             const page = await browser.newPage();
-            await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1');
+            await page.setUserAgent(USER_AGENTS[0]); // Use mobile iOS user agent for Kick
             
             console.log(`🌐 Navigating to: ${channelUrl}`);
             await page.goto(channelUrl, { 
                 waitUntil: 'networkidle2', 
-                timeout: 15000  // Shorter timeout since it will likely be blocked
+                timeout: KICK_BROWSER_TIMEOUT
             });
 
             // Quick check if we're blocked
@@ -439,19 +451,11 @@ class KrumbleScraper {
             }
 
             // If not blocked, continue with basic scraping
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            
-            const kickSelectors = [
-                '[data-testid="video-card"]',
-                '.video-card',
-                '[class*="video"]',
-                'a[href*="/video/"]',
-                'article'
-            ];
+            await new Promise(resolve => setTimeout(resolve, KICK_CONTENT_DELAY));
 
             let livestreams = [];
             
-            for (const selector of kickSelectors) {
+            for (const selector of KICK_SELECTORS) {
                 try {
                     const elements = await page.$$(selector);
                     if (elements.length > 0) {
