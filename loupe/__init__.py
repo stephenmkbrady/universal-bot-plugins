@@ -1,0 +1,1 @@
+# Loupe Plugin - Configurable Web Scraper

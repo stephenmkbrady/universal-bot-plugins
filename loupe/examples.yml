@@ -1,0 +1,107 @@
+# Additional site configuration examples for Loupe Plugin
+# Copy these to config.yml to add more sites
+
+additional_sites:
+  
+  # News sites
+  reuters_tech:
+    url: 'https://www.reuters.com/technology/'
+    name: 'Reuters Technology'
+    description: 'Technology news from Reuters'
+    selectors:
+      headlines: '[data-testid="Heading"]'
+      summaries: '[data-testid="Body"]'
+      timestamps: 'time'
+
+  # Developer communities
+  dev_to:
+    url: 'https://dev.to/'
+    name: 'DEV Community'
+    description: 'Latest posts from DEV.to'
+    selectors:
+      titles: '.crayons-story__title a'
+      authors: '.crayons-story__secondary .crayons-link'
+      tags: '.crayons-tag'
+      reactions: '.crayons-story__details'
+
+  # Documentation sites
+  python_docs_news:
+    url: 'https://docs.python.org/3/whatsnew/'
+    name: 'Python Documentation News'
+    description: "What's new in Python releases"
+    selectors:
+      versions: '.toctree-l1 > a'
+      descriptions: '.toctree-l1 .caption-text'
+
+  # Forums and discussions
+  discourse_meta:
+    url: 'https://meta.discourse.org/latest'
+    name: 'Discourse Meta'
+    description: 'Latest discussions about Discourse'
+    selectors:
+      topics: '.topic-list-item .title a'
+      categories: '.topic-list-item .category-name'
+      replies: '.topic-list-item .replies'
+      activity: '.topic-list-item .relative-date'
+
+  # Package managers
+  npm_trending:
+    url: 'https://www.npmjs.com/browse/star'
+    name: 'NPM Trending'
+    description: 'Most starred packages on NPM'
+    selectors:
+      packages: '.package-details h3 a'
+      descriptions: '.package-details p'
+      authors: '.package-details .author'
+      stats: '.package-details .package-stats'
+
+  # Academic/Research
+  arxiv_cs:
+    url: 'https://arxiv.org/list/cs/recent'
+    name: 'arXiv Computer Science'
+    description: 'Recent computer science papers on arXiv'
+    selectors:
+      titles: '.list-title'
+      authors: '.list-authors'
+      abstracts: '.list-abstract'
+      subjects: '.list-subjects'
+
+# Selector pattern examples:
+
+# Common HTML patterns:
+patterns:
+  
+  # Article/blog sites
+  articles:
+    titles: 'h1, h2, .title, .headline, [itemprop="headline"]'
+    content: '.content, .article-body, main, .post-content'
+    authors: '.author, .byline, [rel="author"]'
+    dates: 'time, .date, .published, [datetime]'
+  
+  # E-commerce sites  
+  products:
+    names: '.product-title, h1.title, .product-name'
+    prices: '.price, .cost, [data-price]'
+    descriptions: '.description, .product-details'
+    reviews: '.review-count, .rating'
+  
+  # Social media / forums
+  posts:
+    titles: '.post-title, h2 a, .topic-title'
+    authors: '.username, .author, .user-name'
+    content: '.post-body, .content, .message'
+    metadata: '.post-meta, .timestamp, .reply-count'
+  
+  # Job boards
+  jobs:
+    titles: '.job-title, h2 a, .position'
+    companies: '.company, .employer'
+    locations: '.location, .job-location'
+    salaries: '.salary, .compensation'
+
+# Tips for finding selectors:
+# 1. Right-click element → "Inspect" 
+# 2. In dev tools, right-click element → "Copy selector"
+# 3. Test with: document.querySelectorAll('your-selector')
+# 4. Use specific enough selectors to avoid unwanted elements
+# 5. Prefer classes over complex nested selectors for reliability

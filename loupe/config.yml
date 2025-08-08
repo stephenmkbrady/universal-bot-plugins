@@ -1,0 +1,88 @@
+# Loupe Web Scraper Configuration
+#
+# For each site you can configure:
+# - url: The website URL to scrape
+# - name: Display name for the site
+# - description: Brief description
+# - monitor: Set to true to enable automatic monitoring
+# - interval: Check interval in seconds (e.g. 1800 = 30 minutes, 3600 = 1 hour)
+# - notify_groups: List of group names to send notifications to
+# - notify_users: List of user names to send notifications to
+# - selectors: CSS selectors to extract content
+#
+# When monitoring is enabled, the bot will automatically check for changes
+# and send notifications to the configured groups/users when content differs.
+
+sites:
+  hacker_news:
+    url: https://news.ycombinator.com/
+    name: Hacker News
+    description: Latest tech news and discussions
+    monitor: false
+    interval: 1800
+    notify_groups:
+    - Cosmic Encabulato_
+    notify_users:
+    - TestUser
+    selectors:
+      stories: .athing .titleline > a
+      scores: .score
+    diff_mode: lines
+  github_trending:
+    url: https://github.com/trending
+    name: GitHub Trending
+    description: Trending repositories on GitHub today
+    selectors:
+      repositories: article h1 a
+      descriptions: article p
+      languages: article [itemprop="programmingLanguage"]
+      stars: article a[href*="/stargazers"]
+  reddit_python:
+    url: https://old.reddit.com/r/Python/
+    name: Reddit r/Python
+    description: Latest posts from Python subreddit
+    selectors:
+      titles: .thing .title a.title
+      scores: .thing .score
+      authors: .thing .author
+      comments: .thing .comments
+  stackoverflow_python:
+    url: https://stackoverflow.com/questions/tagged/python
+    name: Stack Overflow Python
+    description: Latest Python questions on Stack Overflow
+    selectors:
+      questions: .s-post-summary--content-title a
+      votes: .s-post-summary--stats-item-number
+      answers: .s-post-summary--stats-item:has(.icon-answer-sm) .s-post-summary--stats-item-number
+      tags: .post-tag
+  bbc_tech:
+    url: https://www.bbc.com/news/technology
+    name: BBC Technology News
+    description: Latest technology news from BBC
+    selectors:
+      headlines: '[data-testid="card-headline"]'
+      summaries: '[data-testid="card-description"]'
+      timestamps: '[data-testid="card-metadata-lastupdated"]'
+  test_blog:
+    url: https://example.com/blog
+    name: My Test Blog
+    description: Website monitoring for My Test Blog
+    monitor: false
+    interval: 3600
+    notify_groups: []
+    notify_users:
+    - TestUser
+    selectors: {}
+    diff_mode: lines
+  group_blog:
+    url: https://example.com/group
+    name: Group Blog
+    description: Website monitoring for Group Blog
+    monitor: false
+    interval: 3600
+    notify_groups:
+    - Test Team Group
+    notify_users:
+    - GroupUser
+    selectors: {}
+    diff_mode: lines
