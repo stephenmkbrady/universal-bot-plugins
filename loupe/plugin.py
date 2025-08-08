@@ -224,7 +224,7 @@ class LoupePlugin(UniversalBotPlugin):
                 # Enable monitoring: !loupe enable <site_name> [interval]
                 site_id = context.get_arg(1)
                 interval = int(context.get_arg(2)) if context.arg_count > 2 else 3600
-                return await self._enable_monitoring(site_id, interval)
+                return await self._enable_monitoring(site_id, interval, context)
             elif arg == "disable" and context.has_args and context.arg_count > 1:
                 # Disable monitoring: !loupe disable <site_name>
                 site_id = context.get_arg(1)
@@ -592,8 +592,8 @@ For complete documentation, see COMPLETE_COMMANDS.md in the plugin directory.
             self.logger.error(f"Error testing monitoring for {site_id}: {e}")
             return f"❌ Error testing {site_name}: {str(e)}"
     
-    async def _enable_monitoring(self, site_id: str, interval: int) -> str:
-        """Enable monitoring for a site"""
+    async def _enable_monitoring(self, site_id: str, interval: int, context=None) -> str:
+        """Enable monitoring for a site and auto-configure notifications based on context"""
         error = self._validate_site_exists(site_id)
         if error:
             return error
@@ -612,6 +612,34 @@ For complete documentation, see COMPLETE_COMMANDS.md in the plugin directory.
             if 'notify_users' not in site_config:
                 site_config['notify_users'] = []
             
+            # Auto-configure notifications based on context
+            notification_info = []
+            if context:
+                # Determine if this is a group message by checking raw_message data
+                is_group_message = False
+                if hasattr(context, 'raw_message') and context.raw_message:
+                    # Check for groupInfo in the chat_info (SimpleX-specific logic)
+                    chat_info = context.raw_message.get('chatInfo', {})
+                    is_group_message = "groupInfo" in chat_info
+                
+                if is_group_message:
+                    # In a group: add both the group and the user
+                    group_name = context.chat_id  # Use chat_id as group identifier
+                    if group_name not in site_config['notify_groups']:
+                        site_config['notify_groups'].append(group_name)
+                        notification_info.append(f"📢 Added group: {group_name}")
+                    
+                    user_name = context.user_display_name
+                    if user_name not in site_config['notify_users']:
+                        site_config['notify_users'].append(user_name)
+                        notification_info.append(f"👤 Added user: {user_name}")
+                else:
+                    # In direct message: add only the user
+                    user_name = context.user_display_name
+                    if user_name not in site_config['notify_users']:
+                        site_config['notify_users'].append(user_name)
+                        notification_info.append(f"👤 Added user: {user_name}")
+            
             # Save configuration
             await self._save_config()
             
@@ -621,7 +649,13 @@ For complete documentation, see COMPLETE_COMMANDS.md in the plugin directory.
                 self.monitoring_tasks[site_id] = task
                 self.logger.info(f"Started monitoring task for {site_id}")
             
-            return f"✅ **Monitoring enabled for {site_name}**\n⏱️ Interval: {interval}s ({interval//60}m)\n💡 Use `!loupe add-group` or `!loupe add-user` to configure notifications"
+            response = f"✅ **Monitoring enabled for {site_name}**\n⏱️ Interval: {interval}s ({interval//60}m)"
+            if notification_info:
+                response += f"\n🔔 **Notifications configured:**\n" + "\n".join(notification_info)
+            else:
+                response += "\n💡 Use `!loupe add-group` or `!loupe add-user` to configure additional notifications"
+            
+            return response
             
         except ValueError:
             return "❌ Invalid interval value. Please provide a number in seconds."
@@ -1301,9 +1335,8 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
             if items:
                 output += f"**{selector_name.replace('_', ' ').title()}:**\n"
                 for i, item in enumerate(items, 1):
-                    # Truncate long items
-                    display_item = item[:200] + "..." if len(item) > 200 else item
-                    output += f"{i}. {display_item}\n"
+                    # Show full items without truncation
+                    output += f"{i}. {item}\n"
                 output += "\n"
         
         output += f"🔗 Source: {url}"
@@ -1359,10 +1392,10 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
                         diff_mode = site_config.get('diff_mode', 'lines')
                         
                         if diff_mode == 'lines':
-                            diff_content = self._generate_content_diff(previous_lines, current_lines, site_config)
-                            if diff_content:
-                                self.logger.info(f"Content changed for {site_id}, posting diff update")
-                                await self._notify_change_with_diff(site_id, diff_content)
+                            diff_messages = self._generate_content_diff(previous_lines, current_lines, site_config)
+                            if diff_messages:
+                                self.logger.info(f"Content changed for {site_id}, posting diff update ({len(diff_messages)} message(s))")
+                                await self._notify_change_with_diff(site_id, diff_messages)
                             else:
                                 # Hash changed but no meaningful line differences
                                 self.logger.info(f"Content hash changed for {site_id} but no line differences detected")
@@ -1416,39 +1449,49 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
         except Exception as e:
             self.logger.error(f"Error storing/sending notification: {e}")
     
-    async def _notify_change_with_diff(self, site_id: str, diff_content: str):
-        """Notify about content changes using diff format"""
+    async def _notify_change_with_diff(self, site_id: str, diff_messages: List[str]):
+        """Notify about content changes using diff format (potentially multiple messages)"""
         site_config = self.sites.get(site_id, {})
         name = site_config.get('name', site_id)
         
-        message = f"🔔 **{name} Updated**\n\n{diff_content}"
-        
-        # Truncate if too long (keep more space for diffs)
-        if len(message) > 4500:
-            message = message[:4500] + "\n\n... (truncated)"
-        
-        # Store notification for later retrieval
-        notifications_file = self.data_dir / "notifications.jsonl"
-        notification = {
-            "timestamp": datetime.now().isoformat(),
-            "site_id": site_id,
-            "site_name": name,
-            "message": message,
-            "type": "diff"
-        }
-        
-        try:
-            with open(notifications_file, 'a') as f:
-                f.write(json.dumps(notification) + '\n')
+        # Process each message part
+        for i, diff_content in enumerate(diff_messages):
+            # Add header to first message, continuation marker to others
+            if i == 0:
+                message = f"🔔 **{name} Updated**\n\n{diff_content}"
+            else:
+                message = f"🔔 **{name} Updated (continued {i+1}/{len(diff_messages)})**\n\n{diff_content}"
             
-            # Send notifications to configured targets
-            await self._send_to_configured_targets(site_config, message)
+            # Note: No truncation needed since we're already splitting messages
             
-            # Log the notification
-            self.logger.info(f"🔔 Diff notification for {name}: stored and sent to targets")
+            # Store notification for later retrieval
+            notifications_file = self.data_dir / "notifications.jsonl"
+            notification = {
+                "timestamp": datetime.now().isoformat(),
+                "site_id": site_id,
+                "site_name": name,
+                "message": message,
+                "type": "diff",
+                "part": i + 1,
+                "total_parts": len(diff_messages)
+            }
             
-        except Exception as e:
-            self.logger.error(f"Error storing/sending diff notification: {e}")
+            try:
+                with open(notifications_file, 'a') as f:
+                    f.write(json.dumps(notification) + '\n')
+                
+                # Send notifications to configured targets
+                await self._send_to_configured_targets(site_config, message)
+                
+                # Small delay between messages to avoid spam
+                if i < len(diff_messages) - 1:
+                    await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                self.logger.error(f"Error storing/sending diff notification part {i+1}: {e}")
+        
+        # Log the notification
+        self.logger.info(f"🔔 Diff notification for {name}: {len(diff_messages)} message(s) stored and sent to targets")
     
     async def _send_to_configured_targets(self, site_config: Dict[str, Any], message: str):
         """Send notification to configured groups and users"""
@@ -1537,49 +1580,123 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
         max_diff_lines = site_config.get('max_diff_lines', 20)
         major_change_threshold = site_config.get('major_change_threshold', 0.5)
         
-        # If too many changes, provide summary instead of full diff
-        if change_ratio > major_change_threshold:
-            return f"📊 **Major Update Detected**\n• {change_ratio:.1%} of content changed\n• {len(added_lines)} items added, {len(removed_lines)} items removed\n• Use full scrape command for complete current content"
+        # If too many changes, provide summary with sample lines
+        is_major_change = change_ratio > major_change_threshold
         
-        diff_parts = []
+        # Determine how many lines to show
+        # 0 = infinite, otherwise use the configured limit
+        if max_diff_lines == 0:
+            # Infinite - show all lines
+            sample_lines = len(added_lines) + len(removed_lines)
+        elif is_major_change:
+            # Major changes: show fewer sample lines (5) unless infinite is set
+            sample_lines = 5
+        else:
+            # Normal changes: use configured limit
+            sample_lines = max_diff_lines
+        
+        # Instead of concatenating everything, we'll build message parts
+        # that can be split if they get too long
+        message_parts = []
+        current_part = []
+        
+        # For major changes, add a summary header
+        if is_major_change:
+            current_part.append(f"📊 **Major Update Detected**")
+            current_part.append(f"• {change_ratio:.1%} of content changed")
+            current_part.append(f"• {len(added_lines)} items added, {len(removed_lines)} items removed")
+            current_part.append("")
+        
+        # Helper function to check if we should start a new message
+        def should_split_message(current_lines, max_lines_per_message=30):
+            return len(current_lines) > max_lines_per_message
         
         # Show added content
         if added_lines:
             count = len(added_lines)
-            diff_parts.append(f"➕ **Added ({count})**:")
             
-            display_lines = added_lines[:max_diff_lines]
+            # Determine how many added lines to show
+            if max_diff_lines == 0:
+                # Show all added lines
+                display_lines = added_lines
+                label = "Added"
+            elif is_major_change and len(added_lines) > sample_lines:
+                display_lines = added_lines[:sample_lines]  
+                label = "Sample Added"
+            else:
+                display_lines = added_lines[:sample_lines]
+                label = "Added"
+            
+            # Start added section
+            current_part.append(f"➕ **{label} ({count})**:")
+            
             for line in display_lines:
-                diff_parts.append(f"• {line}")
+                current_part.append(f"• {line}")
+                
+                # Check if we should split the message
+                if should_split_message(current_part):
+                    message_parts.append('\n'.join(current_part))
+                    current_part = ["➕ **Added (continued)**:"]
             
-            if len(added_lines) > max_diff_lines:
-                diff_parts.append(f"• ... and {len(added_lines) - max_diff_lines} more items")
+            # Add "more items" indicator if truncated
+            if len(added_lines) > len(display_lines):
+                remaining = len(added_lines) - len(display_lines)
+                current_part.append(f"• ... and {remaining} more items")
         
         # Show removed content  
         if removed_lines:
             count = len(removed_lines)
-            if diff_parts:  # Add spacing if we already have content
-                diff_parts.append("")
-            diff_parts.append(f"➖ **Removed ({count})**:")
             
-            display_lines = removed_lines[:max_diff_lines]
+            # Add spacing if we have content in current part
+            if current_part:
+                current_part.append("")
+            
+            # Determine how many removed lines to show
+            if max_diff_lines == 0:
+                # Show all removed lines
+                display_lines = removed_lines
+                label = "Removed"
+            elif is_major_change and len(removed_lines) > sample_lines:
+                display_lines = removed_lines[:sample_lines]
+                label = "Sample Removed" 
+            else:
+                display_lines = removed_lines[:sample_lines]
+                label = "Removed"
+            
+            current_part.append(f"➖ **{label} ({count})**:")
+            
             for line in display_lines:
-                diff_parts.append(f"• {line}")
+                current_part.append(f"• {line}")
+                
+                # Check if we should split the message
+                if should_split_message(current_part):
+                    message_parts.append('\n'.join(current_part))
+                    current_part = ["➖ **Removed (continued)**:"]
             
-            if len(removed_lines) > max_diff_lines:
-                diff_parts.append(f"• ... and {len(removed_lines) - max_diff_lines} more items")
+            # Add "more items" indicator if truncated
+            if len(removed_lines) > len(display_lines):
+                remaining = len(removed_lines) - len(display_lines)
+                current_part.append(f"• ... and {remaining} more items")
         
-        # Add summary
-        if diff_parts:
-            diff_parts.append("")
-            summary_parts = []
-            if added_lines:
-                summary_parts.append(f"{len(added_lines)} added")
-            if removed_lines:
-                summary_parts.append(f"{len(removed_lines)} removed")
-            diff_parts.append(f"📊 **Summary**: {', '.join(summary_parts)}")
+        # Add summary/footer
+        if current_part:
+            current_part.append("")
+            if is_major_change:
+                current_part.append("💡 **Tip**: Use `!loupe <site>` for complete current content")
+            else:
+                summary_parts = []
+                if added_lines:
+                    summary_parts.append(f"{len(added_lines)} added")
+                if removed_lines:
+                    summary_parts.append(f"{len(removed_lines)} removed")
+                current_part.append(f"📊 **Summary**: {', '.join(summary_parts)}")
         
-        return '\n'.join(diff_parts) if diff_parts else None
+        # Add the final part
+        if current_part:
+            message_parts.append('\n'.join(current_part))
+        
+        # Return list of messages instead of single concatenated string
+        return message_parts if message_parts else None
     
     def _load_previous_content(self, site_id: str) -> List[str]:
         """Load previous content lines from storage"""
