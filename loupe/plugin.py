@@ -50,6 +50,13 @@ from bs4 import BeautifulSoup
 import html2text
 from plugins.universal_plugin_base import UniversalBotPlugin, CommandContext, BotPlatform
 
+# Optional import for Cloudflare challenge handling
+try:
+    import cloudscraper
+    CLOUDSCRAPER_AVAILABLE = True
+except ImportError:
+    CLOUDSCRAPER_AVAILABLE = False
+
 
 class LoupePlugin(UniversalBotPlugin):
     def __init__(self, logger=None):
@@ -327,6 +334,7 @@ class LoupePlugin(UniversalBotPlugin):
         """Show comprehensive help information and configured sites"""
         help_text = """🔍 **Loupe - Web Scraper Plugin**
 *Configurable web scraper with monitoring and notifications*
+*🛡️ Includes advanced DDoS/bot challenge bypass support*
 
 **📚 Quick Commands:**
 • `!loupe` - Show this help and configured sites
@@ -1202,17 +1210,11 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
             
             self.logger.info(f"Testing selector '{css_selector}' on {site_name}")
             
-            # Fetch the webpage
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                }
-                
-                async with session.get(url, headers=headers, timeout=30) as response:
-                    if response.status != 200:
-                        return f"❌ Failed to fetch {site_name}: HTTP {response.status}"
-                    
-                    html_content = await response.text()
+            # Fetch the webpage with fallback handling
+            html_content, method_used = await self._fetch_with_fallback(url, site_name)
+            
+            if method_used == "cloudscraper":
+                self.logger.info(f"Successfully bypassed challenge for {site_name} using cloudscraper")
             
             # Parse HTML and test selector
             soup = BeautifulSoup(html_content, 'html.parser')
@@ -1221,7 +1223,10 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
             # Build result
             test_name = f"**{selector_name}**" if selector_name else "Test Selector"
             result = f"🧪 **Testing {test_name} on {site_name}**\n"
-            result += f"🔍 CSS Selector: `{css_selector}`\n\n"
+            result += f"🔍 CSS Selector: `{css_selector}`\n"
+            if method_used == "cloudscraper":
+                result += f"🛡️ Challenge bypassed using cloudscraper\n"
+            result += "\n"
             
             if not elements:
                 result += "❌ **No elements found**\n"
@@ -1249,6 +1254,97 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
             self.logger.error(f"Error trying selector on {site_id}: {e}")
             return f"❌ Error testing selector: {str(e)}"
     
+    async def _fetch_with_fallback(self, url: str, site_name: str) -> tuple[str, str]:
+        """Fetch webpage with aiohttp, fallback to cloudscraper for challenges
+        Returns (html_content, method_used)
+        """
+        # Try aiohttp first
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+                
+                async with session.get(url, headers=headers, timeout=30) as response:
+                    # Check for challenge/protection responses
+                    if response.status in [200]:
+                        html_content = await response.text()
+                        return html_content, "aiohttp"
+                    elif response.status in [203, 403, 503, 429]:  # Challenge responses
+                        self.logger.warning(f"Challenge detected for {site_name}: HTTP {response.status}")
+                        # Fall through to cloudscraper
+                    else:
+                        raise Exception(f"HTTP {response.status}")
+        except asyncio.TimeoutError:
+            raise Exception("Timeout with aiohttp")
+        except Exception as e:
+            if "Challenge detected" not in str(e):
+                self.logger.warning(f"aiohttp failed for {site_name}: {e}")
+        
+        # Try enhanced requests-based fallback for challenge bypass
+        try:
+            self.logger.info(f"Attempting enhanced requests fallback for {site_name}")
+            import requests
+            
+            # Enhanced session with better headers for challenge bypass
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"'
+            })
+            
+            # Multiple retry attempts with different strategies
+            for attempt in range(3):
+                try:
+                    # Add some randomization to avoid detection patterns
+                    import time
+                    import random
+                    time.sleep(random.uniform(1, 3))  # Random delay between attempts
+                    
+                    response = session.get(url, timeout=30, allow_redirects=True)
+                    
+                    # Check if we got a valid response
+                    if response.status_code == 200:
+                        # Verify content is not a challenge page
+                        content = response.text.lower()
+                        challenge_indicators = [
+                            'checking your browser',
+                            'cloudflare',
+                            'ddos protection',
+                            'security check',
+                            'please wait',
+                            'verification in progress'
+                        ]
+                        
+                        if not any(indicator in content for indicator in challenge_indicators):
+                            self.logger.info(f"Successfully bypassed challenge for {site_name} using enhanced requests")
+                            return response.text, "enhanced_requests"
+                        else:
+                            self.logger.warning(f"Challenge page detected on attempt {attempt + 1} for {site_name}")
+                    
+                except requests.exceptions.RequestException as e:
+                    self.logger.warning(f"Requests attempt {attempt + 1} failed for {site_name}: {e}")
+                    if attempt == 2:  # Last attempt
+                        raise
+            
+            # If we get here, all attempts failed
+            raise Exception("All challenge bypass attempts failed")
+            
+        except Exception as e:
+            self.logger.error(f"Enhanced requests fallback also failed for {site_name}: {e}")
+            raise Exception(f"Both aiohttp and enhanced requests failed: {e}")
+
     async def _scrape_site(self, site_id: str) -> str:
         """Scrape a specific site"""
         error = self._validate_site_exists(site_id)
@@ -1269,17 +1365,11 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
         try:
             self.logger.info(f"Scraping {name} at {url}")
             
-            # Fetch the webpage
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                }
-                
-                async with session.get(url, headers=headers, timeout=30) as response:
-                    if response.status != 200:
-                        return f"❌ Failed to fetch {name}: HTTP {response.status}"
-                    
-                    html_content = await response.text()
+            # Fetch the webpage with fallback handling
+            html_content, method_used = await self._fetch_with_fallback(url, name)
+            
+            if method_used == "cloudscraper":
+                self.logger.info(f"Successfully bypassed challenge for {name} using cloudscraper")
             
             # Parse HTML
             soup = BeautifulSoup(html_content, 'html.parser')
@@ -1300,11 +1390,9 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
             # Format output
             return self._format_results(name, url, results)
             
-        except asyncio.TimeoutError:
-            return f"❌ Timeout while fetching {name}"
         except Exception as e:
             self.logger.error(f"Error scraping {name}: {e}")
-            return f"❌ Error scraping {name}: {str(e)}"
+            return f"❌ Failed to fetch {name}: {str(e)}"
     
     def _element_to_text(self, element) -> str:
         """Convert HTML element to formatted text"""
