@@ -26,7 +26,7 @@ Selector Management:
 Monitoring & Notifications:
 - !loupe enable <site> [interval] - Enable monitoring
 - !loupe disable <site> - Disable monitoring
-- !loupe add-group <site> <group> - Add notification group
+- !loupe add-group <site> [group] - Add notification group (auto-detects current group)
 - !loupe add-user <site> <user> - Add notification user
 
 Diff System:
@@ -50,12 +50,18 @@ from bs4 import BeautifulSoup
 import html2text
 from plugins.universal_plugin_base import UniversalBotPlugin, CommandContext, BotPlatform
 
-# Optional import for Cloudflare challenge handling
+# Optional imports for challenge handling
 try:
     import cloudscraper
     CLOUDSCRAPER_AVAILABLE = True
 except ImportError:
     CLOUDSCRAPER_AVAILABLE = False
+
+try:
+    from playwright.async_api import async_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
 
 
 class LoupePlugin(UniversalBotPlugin):
@@ -241,10 +247,21 @@ class LoupePlugin(UniversalBotPlugin):
                 site_id = context.get_arg(1)
                 interval = int(context.get_arg(2))
                 return await self._set_interval(site_id, interval)
-            elif arg == "add-group" and context.has_args and context.arg_count > 2:
-                # Add group: !loupe add-group <site_name> <group_name>
+            elif arg == "add-group" and context.has_args and context.arg_count >= 2:
+                # Add group: !loupe add-group <site_name> [group_name]
+                # If no group_name provided, use current group
                 site_id = context.get_arg(1)
-                group_name = " ".join(context.args[2:])  # Allow group names with spaces
+                
+                if context.arg_count > 2:
+                    # Explicit group name provided
+                    group_name = " ".join(context.args[2:])  # Allow group names with spaces
+                else:
+                    # Auto-detect current group
+                    if not self._is_group_context(context):
+                        return f"❌ No group name provided and command not sent from a group chat.\n💡 Use: `!loupe add-group {site_id} <group_name>`"
+                    group_name = context.chat_id
+                    self.logger.info(f"Auto-detected current group for add-group: {group_name}")
+                
                 return await self._add_notification_target(site_id, group_name, "group")
             elif arg == "remove-group" and context.has_args and context.arg_count > 2:
                 # Remove group: !loupe remove-group <site_name> <group_name>
@@ -305,8 +322,9 @@ class LoupePlugin(UniversalBotPlugin):
                 selector_name = context.get_arg(2)
                 new_css_selector = " ".join(context.args[3:])
                 return await self._edit_selector(site_id, selector_name, new_css_selector)
-            elif arg == "remove-selector" and context.has_args and context.arg_count > 2:
+            elif arg in ["remove-selector", "del-selector"] and context.has_args and context.arg_count > 2:
                 # Remove selector: !loupe remove-selector <site_name> <selector_name>
+                # Also: !loupe del-selector <site_name> <selector_name>
                 site_id = context.get_arg(1)
                 selector_name = context.get_arg(2)
                 return await self._remove_selector(site_id, selector_name)
@@ -334,7 +352,7 @@ class LoupePlugin(UniversalBotPlugin):
         """Show comprehensive help information and configured sites"""
         help_text = """🔍 **Loupe - Web Scraper Plugin**
 *Configurable web scraper with monitoring and notifications*
-*🛡️ Includes advanced DDoS/bot challenge bypass support*
+*🛡️ Advanced multi-layer challenge bypass: aiohttp → requests → playwright*
 
 **📚 Quick Commands:**
 • `!loupe` - Show this help and configured sites
@@ -357,7 +375,7 @@ class LoupePlugin(UniversalBotPlugin):
 • `!loupe enable <site> [interval]` - Enable monitoring
 • `!loupe disable <site>` - Disable monitoring
 • `!loupe interval <site> <seconds>` - Set interval
-• `!loupe add-group <site> <group>` - Add notification group
+• `!loupe add-group <site> [group]` - Add notification group (auto-detects current group)
 • `!loupe add-user <site> <user>` - Add notification user
 
 **🔄 Diff System:**
@@ -1210,15 +1228,41 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
             
             self.logger.info(f"Testing selector '{css_selector}' on {site_name}")
             
-            # Fetch the webpage with fallback handling
-            html_content, method_used = await self._fetch_with_fallback(url, site_name)
+            # Fetch the webpage with fallback handling and timeout
+            import asyncio
+            try:
+                html_content, method_used = await asyncio.wait_for(
+                    self._fetch_with_fallback(url, site_name), 
+                    timeout=120  # 2 minute total timeout
+                )
+            except asyncio.TimeoutError:
+                self.logger.error(f"Timeout fetching {site_name} after 2 minutes")
+                return f"❌ **Request timed out after 2 minutes**\n🔄 Site may be experiencing issues or heavy protection"
             
             if method_used == "cloudscraper":
                 self.logger.info(f"Successfully bypassed challenge for {site_name} using cloudscraper")
             
-            # Parse HTML and test selector
+            # Validate and fix common CSS selector issues
+            fixed_selector = self._validate_and_fix_css_selector(css_selector)
+            if fixed_selector != css_selector:
+                self.logger.info(f"Fixed CSS selector: {css_selector} -> {fixed_selector}")
+                css_selector = fixed_selector
+            
+            # Parse HTML and test selector with timeout
             soup = BeautifulSoup(html_content, 'html.parser')
-            elements = soup.select(css_selector)
+            
+            try:
+                # Add timeout to selector parsing to prevent hanging
+                elements = await asyncio.wait_for(
+                    asyncio.to_thread(soup.select, css_selector),
+                    timeout=10.0  # 10 second timeout for CSS selector
+                )
+            except asyncio.TimeoutError:
+                self.logger.error(f"CSS selector parsing timed out for: {css_selector}")
+                return f"❌ **CSS selector too complex or invalid**\n🔍 Selector: `{css_selector}`\n💡 Try a simpler selector like `[class*=\"group/card\"]`"
+            except Exception as e:
+                self.logger.error(f"CSS selector parsing failed: {e}")
+                return f"❌ **Invalid CSS selector**\n🔍 Selector: `{css_selector}`\n💡 Error: {str(e)}"
             
             # Build result
             test_name = f"**{selector_name}**" if selector_name else "Test Selector"
@@ -1248,11 +1292,53 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
                 if not selector_name:
                     result += f"\n\n💡 To save this selector: `!loupe add-selector {site_id} <name> {css_selector}`"
             
+            self.logger.info(f"Successfully completed selector test for {site_name}, returning {len(result)} chars")
             return result
             
         except Exception as e:
             self.logger.error(f"Error trying selector on {site_id}: {e}")
             return f"❌ Error testing selector: {str(e)}"
+    
+    def _validate_and_fix_css_selector(self, selector: str) -> str:
+        """Validate and fix common CSS selector issues that cause hanging"""
+        import re
+        
+        # Fix exact class matching with spaces (common mistake)
+        # *[class='a b c'] -> [class*='a'][class*='b'][class*='c']
+        exact_class_pattern = r"\*?\[class='([^']+)'\]"
+        match = re.search(exact_class_pattern, selector)
+        if match:
+            class_content = match.group(1)
+            if ' ' in class_content:
+                # Split into individual class contains selectors
+                classes = class_content.split()
+                fixed_parts = [f'[class*="{cls}"]' for cls in classes if cls.strip()]
+                fixed_selector = ''.join(fixed_parts)
+                return fixed_selector
+        
+        # Remove problematic universal selector with complex attribute matching
+        if selector.startswith('*[class=') and len(selector) > 50:
+            # Convert *[class='long string'] to [class*='first few words']  
+            match = re.search(r"\*\[class='([^']+)'\]", selector)
+            if match:
+                class_content = match.group(1)
+                # Take first 2-3 distinctive words
+                words = class_content.split()[:2]
+                if words:
+                    return f'[class*="{words[0]}"]'
+        
+        return selector
+    
+    def _is_group_context(self, context) -> bool:
+        """Check if the command context is from a group chat"""
+        try:
+            # Check if raw_message contains group info
+            raw_message = getattr(context, 'raw_message', {})
+            chat_info = raw_message.get('chatInfo', {})
+            return 'groupInfo' in chat_info
+        except Exception as e:
+            self.logger.debug(f"Error checking group context: {e}")
+            return False
     
     async def _fetch_with_fallback(self, url: str, site_name: str) -> tuple[str, str]:
         """Fetch webpage with aiohttp, fallback to cloudscraper for challenges
@@ -1343,7 +1429,160 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
             
         except Exception as e:
             self.logger.error(f"Enhanced requests fallback also failed for {site_name}: {e}")
-            raise Exception(f"Both aiohttp and enhanced requests failed: {e}")
+            
+        # Final fallback: Use Playwright for JavaScript-heavy sites and sophisticated challenges
+        playwright_available = False
+        try:
+            from playwright.async_api import async_playwright
+            playwright_available = True
+        except ImportError:
+            pass
+        
+        if playwright_available:
+            try:
+                self.logger.info(f"Attempting Playwright browser fallback for {site_name}")
+                return await self._fetch_with_playwright(url, site_name)
+            except Exception as e:
+                self.logger.error(f"Playwright fallback also failed for {site_name}: {e}")
+                raise Exception(f"All methods failed (aiohttp, requests, playwright): {e}")
+        else:
+            self.logger.error(f"Playwright not available for browser fallback on {site_name}")
+            raise Exception("All available methods failed: aiohttp, enhanced requests")
+
+    async def _fetch_with_playwright(self, url: str, site_name: str) -> tuple[str, str]:
+        """Fetch webpage using Playwright browser automation for sophisticated anti-bot sites
+        Returns (html_content, method_used)
+        """
+        from playwright.async_api import async_playwright
+        
+        async with async_playwright() as p:
+            # Launch browser with realistic settings and resource limits
+            browser = await p.chromium.launch(
+                headless=True,  # Run in headless mode for server environments
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--single-process',
+                    '--disable-gpu',
+                    '--memory-pressure-off',  # Prevent memory pressure issues
+                    '--max_old_space_size=512',  # Limit memory usage
+                    '--disable-background-timer-throttling',  # Prevent hanging
+                    '--disable-renderer-backgrounding',
+                    '--disable-backgrounding-occluded-windows',
+                ]
+            )
+            
+            try:
+                # Create context with realistic user agent and viewport
+                context = await browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    locale='en-US',
+                    timezone_id='America/New_York'
+                )
+                
+                # Add realistic headers
+                await context.set_extra_http_headers({
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"'
+                })
+                
+                page = await context.new_page()
+                
+                try:
+                    self.logger.info(f"Playwright: Navigating to {url}")
+                    
+                    # Navigate with shorter timeout to prevent hanging
+                    await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                    
+                    # Wait a bit to let any JavaScript challenges load
+                    await page.wait_for_timeout(2000)
+                    
+                    # Check for common challenge indicators with individual timeouts
+                    challenge_indicators = [
+                        'text="Checking your browser"',
+                        'text="DDoS protection"',
+                        'text="Please wait"',
+                        'text="Verifying you are human"',
+                        '[alt*="Cloudflare"]',
+                        '.cf-error-details',
+                        '#challenge-form'
+                    ]
+                    
+                    # Wait for potential challenges to resolve with shorter timeouts
+                    challenge_detected = False
+                    for indicator in challenge_indicators:
+                        try:
+                            element = await asyncio.wait_for(
+                                page.wait_for_selector(indicator, timeout=1500), 
+                                timeout=2.0
+                            )
+                            if element:
+                                challenge_detected = True
+                                self.logger.info(f"Challenge detected: {indicator}")
+                                break
+                        except (asyncio.TimeoutError, Exception):
+                            continue  # Selector not found or timed out, which is good
+                    
+                    if challenge_detected:
+                        self.logger.info(f"Waiting for challenge to resolve...")
+                        # Wait shorter for challenge to resolve to prevent hanging
+                        await page.wait_for_timeout(5000)
+                        
+                        # Check if we're redirected or content changes with shorter timeout
+                        try:
+                            await page.wait_for_load_state('networkidle', timeout=8000)
+                        except:
+                            self.logger.info("Network didn't idle within timeout, continuing anyway")
+                            pass  # Continue even if network doesn't idle
+                    
+                    # Get the final HTML content
+                    html_content = await page.content()
+                    
+                    # Verify we got actual content, not a challenge page
+                    content_lower = html_content.lower()
+                    remaining_challenges = [
+                        'checking your browser',
+                        'ddos protection',
+                        'please wait',
+                        'verification in progress',
+                        'cloudflare ray id'
+                    ]
+                    
+                    if any(challenge in content_lower for challenge in remaining_challenges):
+                        # Still seeing challenge content
+                        self.logger.warning(f"Playwright still sees challenge content for {site_name}")
+                        # Try one more shorter wait
+                        await page.wait_for_timeout(3000)
+                        html_content = await page.content()
+                    
+                    if len(html_content) < 1000:
+                        self.logger.warning(f"Playwright got suspiciously short content ({len(html_content)} chars) for {site_name}")
+                    else:
+                        self.logger.info(f"Playwright successfully fetched {len(html_content)} characters for {site_name}")
+                    
+                    return html_content, "playwright"
+                    
+                finally:
+                    await page.close()
+                    await context.close()
+                    
+            finally:
+                await browser.close()
 
     async def _scrape_site(self, site_id: str) -> str:
         """Scrape a specific site"""

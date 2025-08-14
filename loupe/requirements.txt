@@ -4,3 +4,4 @@ html2text>=2020.1.16
 pyyaml>=6.0
 lxml>=4.9.0
 cloudscraper>=1.2.60
+playwright>=1.40.0
