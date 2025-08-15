@@ -54,10 +54,10 @@ A collection of universal plugins for the Universal Chat Bot Framework. These pl
 - `!msghistory` - Debug message history storage
 
 **Advanced Context Usage:**
-- `!ask -m 1 <question>` - Use the last 1 message as context
-- `!ask -m 1-3 <question>` - Use last 3 messages as context
-- `!ask -m 1,4,6 <question>` - Use specific message indices
-- `!ask -m 2-5,8 <question>` - Use ranges and specific messages
+- `!ask m1 <question>` - Use the last 1 message as context
+- `!ask m1-3 <question>` - Use last 3 messages as context
+- `!ask m1,4,6 <question>` - Use specific message indices
+- `!ask m2-5,8 <question>` - Use ranges and specific messages
 
 **Features:**
 - Integration with NIST Randomness Beacon for true randomness

@@ -350,19 +350,25 @@ This value changes every {self.nist_update_interval} seconds and is cryptographi
         # Debug logging
         self.logger.info(f"AI command debug - args: {args}, args_raw: '{context.args_raw}'")
         
-        # Check for -m flag
-        if args and args[0].startswith('-m'):
+        # Check for message context flag (support both -m and m formats)
+        if args and (args[0].startswith('-m') or args[0].startswith('m')):
             message_flag = args.pop(0)
             
-            # Extract index part (-m1,4,6 or -m 1,4,6)
+            # Extract index part (support multiple formats)
             if message_flag == '-m' and args:
-                # Format: -m 1,4,6
+                # Format: -m 1,4,6 (old format)
                 index_str = args.pop(0)
-            elif len(message_flag) > 2:
-                # Format: -m1,4,6
+            elif message_flag == 'm' and args:
+                # Format: m 1,4,6 (new format with space)
+                index_str = args.pop(0)
+            elif message_flag.startswith('-m') and len(message_flag) > 2:
+                # Format: -m1,4,6 (old format)
                 index_str = message_flag[2:]
+            elif message_flag.startswith('m') and len(message_flag) > 1:
+                # Format: m1,4,6 (new format without space)
+                index_str = message_flag[1:]
             else:
-                return "❌ **Invalid -m flag usage**\n💡 Use: `!ask -m 1,4,6 your question`"
+                return "❌ **Invalid message context usage**\n💡 Use: `!ask m1,4,6 your question`"
             
             # Parse the indices
             try:
@@ -575,10 +581,10 @@ Keep response concise but comprehensive."""
 • `!ai your question here` - Same as !ask
 
 **With Message Context:**
-• `!ask -m 1 your question` - Include previous message
-• `!ask -m 1-3 your question` - Include last 3 messages  
-• `!ask -m 1,4,6 your question` - Include messages 1, 4, and 6
-• `!ask -m 2-5,8 your question` - Include messages 2-5 and 8
+• `!ask m1 your question` - Include previous message
+• `!ask m1-3 your question` - Include last 3 messages  
+• `!ask m1,4,6 your question` - Include messages 1, 4, and 6
+• `!ask m2-5,8 your question` - Include messages 2-5 and 8
 
 **Message Index System:**
 • `1` = Most recent message (immediate previous)
@@ -587,9 +593,9 @@ Keep response concise but comprehensive."""
 • etc.
 
 **Examples:**
-• `!ask -m 1 what is the main topic discussed?`
-• `!ask -m 1-3 how many calories in total?`
-• `!ask -m1,4,6 extract URLs from paths using base URL`
+• `!ask m1 what is the main topic discussed?`
+• `!ask m1-3 how many calories in total?`
+• `!ask m1,4,6 extract URLs from paths using base URL`
 
 **Note**: Only the last {self.max_messages} messages per chat are remembered."""
     
