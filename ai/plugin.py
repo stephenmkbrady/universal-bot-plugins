@@ -144,7 +144,7 @@ class UniversalAIPlugin(UniversalBotPlugin):
     
     def get_commands(self) -> List[str]:
         """Return list of commands this plugin handles"""
-        return ["8ball", "advice", "advise", "bible", "song", "nist", "ai", "ask"]
+        return ["8ball", "advice", "advise", "bible", "song", "nist", "ai", "ask", "msghistory"]
     
     async def handle_command(self, context: CommandContext) -> Optional[str]:
         """Handle commands for this plugin"""
@@ -166,6 +166,8 @@ class UniversalAIPlugin(UniversalBotPlugin):
                 return await self._handle_nist(context)
             elif context.command in ["ai", "ask"]:
                 return await self._handle_ai_question(context)
+            elif context.command == "msghistory":
+                return await self._handle_msghistory_debug(context)
                 
         except Exception as e:
             self.logger.error(f"Error handling {context.command} command: {str(e)}", exc_info=True)
@@ -176,8 +178,11 @@ class UniversalAIPlugin(UniversalBotPlugin):
     async def handle_message(self, context: CommandContext) -> Optional[str]:
         """Store non-command messages in history for context"""
         try:
+            self.logger.info(f"📥 AI PLUGIN: handle_message called for: '{context.args_raw}' from {context.user_display_name} in {context.chat_id}")
+            
             # Only store non-command messages
             if not context.args_raw.startswith('!'):
+                self.logger.info(f"📥 AI PLUGIN: Storing non-command message")
                 message = ChatMessage(
                     content=context.args_raw,
                     sender=context.user_display_name,
@@ -188,12 +193,43 @@ class UniversalAIPlugin(UniversalBotPlugin):
                 
                 self.message_history.add_message(context.chat_id, message)
                 total_messages = self.message_history.get_chat_message_count(context.chat_id)
-                self.logger.info(f"Stored message from {context.user_display_name} in {context.chat_id} (total: {total_messages})")
+                self.logger.info(f"✅ AI PLUGIN: Stored message from {context.user_display_name} in {context.chat_id} (total: {total_messages})")
+            else:
+                self.logger.info(f"📥 AI PLUGIN: Skipping command message (starts with !)")
                 
         except Exception as e:
-            self.logger.error(f"Error storing message: {e}")
+            self.logger.error(f"❌ AI PLUGIN: Error storing message: {e}")
         
         return None  # Don't respond to regular messages
+    
+    async def _handle_msghistory_debug(self, context: CommandContext) -> str:
+        """Debug command to show message history state"""
+        try:
+            chat_id = context.chat_id
+            total_messages = self.message_history.get_chat_message_count(chat_id)
+            
+            debug_info = f"🔍 **Message History Debug for {chat_id}**\n\n"
+            debug_info += f"**Total Messages:** {total_messages}\n\n"
+            
+            if chat_id in self.message_history.chat_histories:
+                all_messages = self.message_history.chat_histories[chat_id]
+                debug_info += f"**Recent Messages (last 10):**\n"
+                
+                recent_messages = all_messages[-10:] if all_messages else []
+                for i, msg in enumerate(recent_messages):
+                    debug_info += f"{i+1}. [{msg.sender}] {msg.timestamp.strftime('%H:%M:%S')}: {msg.content[:100]}...\n"
+                    
+                if not recent_messages:
+                    debug_info += "No messages stored yet.\n"
+            else:
+                debug_info += f"**No chat history found for chat_id:** `{chat_id}`\n"
+            
+            debug_info += f"\n**Chat histories tracked:** {list(self.message_history.chat_histories.keys())}"
+            
+            return debug_info
+            
+        except Exception as e:
+            return f"❌ Error getting message history debug: {e}"
     
     async def _handle_8ball(self, context: CommandContext) -> str:
         """Handle magic 8-ball command"""
@@ -326,8 +362,25 @@ This value changes every 60 seconds and is cryptographically signed."""
                 
                 available_count = self.message_history.get_chat_message_count(context.chat_id)
                 
+                # Add detailed debugging
+                self.logger.info(f"🔍 MESSAGE HISTORY DEBUG:")
+                self.logger.info(f"  - Chat ID: {context.chat_id}")
+                self.logger.info(f"  - Requested indices: {sorted(indices)}")
+                self.logger.info(f"  - Available message count: {available_count}")
+                self.logger.info(f"  - Selected messages: {len(selected_messages)}")
+                
+                # Log recent messages for debugging
+                if context.chat_id in self.message_history.chat_histories:
+                    all_messages = self.message_history.chat_histories[context.chat_id]
+                    recent_messages = all_messages[-5:] if all_messages else []
+                    self.logger.info(f"  - Recent messages (last 5):")
+                    for i, msg in enumerate(recent_messages):
+                        self.logger.info(f"    {i+1}. [{msg.sender}]: {msg.content[:50]}...")
+                else:
+                    self.logger.info(f"  - No chat history found for chat_id: {context.chat_id}")
+                
                 if not selected_messages:
-                    return f"❌ **No messages found for indices: {sorted(indices)}**\n💡 Only {available_count} messages available in this chat"
+                    return f"❌ **No messages found for indices: {sorted(indices)}**\n💡 Only {available_count} messages available in this chat..."
                 
                 self.logger.info(f"Using {len(selected_messages)} context messages for AI query from {context.user_display_name}")
                 
