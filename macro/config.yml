@@ -1,0 +1,40 @@
+# Macro Plugin Configuration
+
+# Manual macros (triggered with !macro <name>)
+macros:
+  urls: "!ask m1 combine the base URL with the path URL to make a complete URL and put them on a newline with no surrounding characters"
+  summary: "!ask m1-3 summarize the main points from these messages"
+  extract: "!ask m1 extract all URLs, emails, and phone numbers from this message"
+  translate: "!ask m1 translate this message to English"
+  
+# Auto-trigger macros (automatically run when regex matches message content)
+auto_triggers:
+  # Auto-translate when message contains non-English characters
+  - name: "auto_translate"
+    regex: "[\u4e00-\u9fff\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff]+"
+    command: "!ask m1 detect the language and translate this to English"
+    enabled: true
+    description: "Auto-translate messages with non-English characters"
+    
+  # Auto-extract URLs when multiple URLs are detected
+  - name: "auto_url_extract"
+    regex: '🔍.*\*\*\*\*.*\*\*Titles:\*\*'
+    command: "!ask m1 combine the base URL with the path URLs to make complete URLs and put them on a newline with no surrounding characters or special characters, and no bullet points or number list"
+    enabled: true
+    description: "Auto-extract URLs when multiple URLs are found"
+    
+  # Auto-summarize long messages
+
+# Plugin settings
+settings:
+  # Cooldown between auto-triggers to prevent spam (seconds)
+  auto_trigger_cooldown: 5
+  
+  # Maximum number of auto-triggers per chat per hour
+  max_auto_triggers_per_hour: 10
+  
+  # Allow users to create their own macros
+  allow_user_macros: true
+  
+  # Require admin permission for auto-trigger management
+  require_admin_for_auto_triggers: true

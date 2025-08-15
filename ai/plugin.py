@@ -10,6 +10,7 @@ import os
 import aiohttp
 import time
 import re
+import yaml
 from typing import List, Optional, Set, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
@@ -117,29 +118,34 @@ class UniversalAIPlugin(UniversalBotPlugin):
         if not self.logger:
             self.logger = logging.getLogger(f"plugin.{self.name}")
         
-        # AI configuration (configurable via environment variables)
+        # Load configuration from YAML file
+        self.config = self._load_config()
+        
+        # AI configuration with fallback to environment variables
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-        self.nist_beacon_url = os.getenv("NIST_BEACON_URL", "https://beacon.nist.gov/beacon/2.0/pulse/last")
-        self.openrouter_url = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions")
-        self.model = os.getenv("AI_MODEL", "cognitivecomputations/dolphin3.0-mistral-24b:free")
+        self.nist_beacon_url = self.config.get('nist', {}).get('beacon_url', os.getenv("NIST_BEACON_URL", "https://beacon.nist.gov/beacon/2.0/pulse/last"))
+        self.openrouter_url = self.config.get('api', {}).get('url', os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions"))
+        self.model = self.config.get('primary_model', os.getenv("AI_MODEL", "cognitivecomputations/dolphin3.0-mistral-24b:free"))
         
         # Message history management
-        self.max_messages = int(os.getenv("AI_MAX_MESSAGES", "50"))
+        message_history_config = self.config.get('message_history', {})
+        self.max_messages = message_history_config.get('max_messages', int(os.getenv("AI_MAX_MESSAGES", "50")))
         self.message_history = MessageHistory(max_messages=self.max_messages)
         
-        # Configurable limits  
-        self.max_recent_display = int(os.getenv("AI_MAX_RECENT_DISPLAY", "10"))
-        self.max_preview_length = int(os.getenv("AI_MAX_PREVIEW_LENGTH", "100"))
-        self.nist_update_interval = int(os.getenv("AI_NIST_UPDATE_INTERVAL", "60"))
-        self.api_timeout = int(os.getenv("AI_API_TIMEOUT", "10"))
+        # Configurable limits from config or environment
+        self.max_recent_display = message_history_config.get('max_recent_display', int(os.getenv("AI_MAX_RECENT_DISPLAY", "10")))
+        self.max_preview_length = message_history_config.get('max_preview_length', int(os.getenv("AI_MAX_PREVIEW_LENGTH", "100")))
+        self.nist_update_interval = self.config.get('nist', {}).get('update_interval', int(os.getenv("AI_NIST_UPDATE_INTERVAL", "60")))
+        self.api_timeout = self.config.get('api', {}).get('timeout', int(os.getenv("AI_API_TIMEOUT", "10")))
         
-        # Token limits for different commands
-        self.tokens_8ball = int(os.getenv("AI_TOKENS_8BALL", "100"))
-        self.tokens_advice = int(os.getenv("AI_TOKENS_ADVICE", "200")) 
-        self.tokens_bible = int(os.getenv("AI_TOKENS_BIBLE", "300"))
-        self.tokens_song = int(os.getenv("AI_TOKENS_SONG", "400"))
-        self.tokens_ai = int(os.getenv("AI_TOKENS_AI", "500"))
-        self.tokens_ask = int(os.getenv("AI_TOKENS_ASK", "600"))
+        # Token limits for different commands from config
+        tokens_config = self.config.get('tokens', {})
+        self.tokens_8ball = tokens_config.get('8ball', int(os.getenv("AI_TOKENS_8BALL", "100")))
+        self.tokens_advice = tokens_config.get('advice', int(os.getenv("AI_TOKENS_ADVICE", "200")))
+        self.tokens_bible = tokens_config.get('bible', int(os.getenv("AI_TOKENS_BIBLE", "300")))
+        self.tokens_song = tokens_config.get('song', int(os.getenv("AI_TOKENS_SONG", "400")))
+        self.tokens_ai = tokens_config.get('ai', int(os.getenv("AI_TOKENS_AI", "500")))
+        self.tokens_ask = tokens_config.get('ask', int(os.getenv("AI_TOKENS_ASK", "600")))
         self.parser = MessageIndexParser()
     
     async def _on_initialize(self) -> bool:
@@ -636,46 +642,94 @@ Keep response concise but comprehensive."""
 # SimpleX-specific helper methods removed - now using platform service for message history
     
     async def _call_openrouter_api(self, prompt: str, max_tokens: int = None) -> str:
-        """Make API call to OpenRouter"""
-        try:
-            # Use default token limit if none provided
-            if max_tokens is None:
-                max_tokens = self.tokens_ai
+        """Make API call to OpenRouter with fallback models"""
+        # Use default token limit if none provided
+        if max_tokens is None:
+            max_tokens = self.tokens_ai
+            
+        # Define fallback models from config
+        fallback_models = [self.model]  # Primary model first
+        config_fallbacks = self.config.get('fallback_models', [
+            "google/gemini-2.0-flash-exp:free",
+            "deepseek/deepseek-chat-v3-0324:free", 
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "google/gemma-3-27b-it:free",
+            "mistralai/mistral-7b-instruct:free"
+        ])
+        fallback_models.extend(config_fallbacks)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_models = []
+        for model in fallback_models:
+            if model not in seen:
+                seen.add(model)
+                unique_models.append(model)
+        
+        fallback_models = unique_models
+            
+        headers = {
+            "Authorization": f"Bearer {self.openrouter_api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/your-repo",
+            "X-Title": "AI Bot Plugin"
+        }
+        
+        # Try each model in sequence
+        for attempt, model in enumerate(fallback_models):
+            try:
+                self.logger.info(f"🎯 AI API - Attempt {attempt + 1} with model: {model}")
                 
-            headers = {
-                "Authorization": f"Bearer {self.openrouter_api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/your-repo",
-                "X-Title": "AI Bot Plugin"
-            }
-            
-            data = {
-                "model": self.model,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ],
-                "max_tokens": max_tokens,
-                "temperature": 0.8
-            }
-            
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.openrouter_url, 
-                    headers=headers, 
-                    json=data,
-                    timeout=aiohttp.ClientTimeout(total=self.api_timeout)
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        return result['choices'][0]['message']['content'].strip()
-                    else:
-                        self.logger.error(f"OpenRouter API error: {response.status}")
-                        return "❌ AI service temporarily unavailable"
-                        
+                data = {
+                    "model": model,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "max_tokens": max_tokens,
+                    "temperature": self.config.get('api', {}).get('temperature', 0.8)
+                }
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        self.openrouter_url, 
+                        headers=headers, 
+                        json=data,
+                        timeout=aiohttp.ClientTimeout(total=self.api_timeout)
+                    ) as response:
+                        if response.status == 200:
+                            result = await response.json()
+                            content = result['choices'][0]['message']['content'].strip()
+                            if attempt > 0:
+                                self.logger.info(f"✅ AI API succeeded with fallback model {model}")
+                            return content
+                        else:
+                            error_text = await response.text()
+                            self.logger.error(f"❌ SINGLE_PASS API error {response.status} with {model}: {error_text}")
+                            continue
+                            
+            except Exception as e:
+                self.logger.error(f"❌ AI API failed with {model}: {e}")
+                continue
+        
+        # If all models failed
+        self.logger.error(f"❌ All fallback models failed for AI request")
+        return "❌ AI service temporarily unavailable. All fallback models failed."
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """Load configuration from YAML file"""
+        config_path = os.path.join(os.path.dirname(__file__), 'config.yml')
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                    self.logger.info(f"✅ AI CONFIG: Loaded configuration from {config_path}")
+                    return config or {}
+            else:
+                self.logger.warning(f"⚠️ AI CONFIG: Configuration file not found at {config_path}, using defaults")
+                return {}
         except Exception as e:
-            self.logger.error(f"Error calling OpenRouter API: {e}")
-            return "❌ Error communicating with AI service"
+            self.logger.error(f"❌ AI CONFIG: Error loading configuration from {config_path}: {e}")
+            return {}
     
     async def cleanup(self):
         """Cleanup when plugin is unloaded"""

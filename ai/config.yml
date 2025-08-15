@@ -1,0 +1,38 @@
+# AI Plugin Configuration
+
+# Primary model for general AI responses
+primary_model: "cognitivecomputations/dolphin3.0-mistral-24b:free"
+
+# Fallback models tried in sequence when primary fails
+fallback_models:
+  - "google/gemini-2.0-flash-exp:free"
+  - "deepseek/deepseek-chat-v3-0324:free" 
+  - "meta-llama/llama-3.3-70b-instruct:free"
+  - "google/gemma-3-27b-it:free"
+  - "mistralai/mistral-7b-instruct:free"
+
+# Token limits for different command types
+tokens:
+  8ball: 100
+  advice: 200
+  bible: 300
+  song: 400
+  ai: 500
+  ask: 600
+
+# API configuration
+api:
+  url: "https://openrouter.ai/api/v1/chat/completions"
+  timeout: 10
+  temperature: 0.8
+
+# Message history configuration
+message_history:
+  max_messages: 50
+  max_recent_display: 10
+  max_preview_length: 100
+
+# NIST Randomness Beacon configuration
+nist:
+  update_interval: 60  # seconds
+  beacon_url: "https://beacon.nist.gov/beacon/2.0/chain/1/pulse/last"

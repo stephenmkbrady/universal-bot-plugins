@@ -1,0 +1,2 @@
+# Macro Plugin Requirements
+pyyaml>=6.0

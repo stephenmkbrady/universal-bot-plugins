@@ -38,7 +38,7 @@ class SimpleXMessageHistoryService(MessageHistoryService):
         """Check if service is available"""
         return (self.bot and 
                 hasattr(self.bot, 'websocket_manager') and 
-                self.bot.websocket_manager.is_connected)
+                self.bot.websocket_manager.websocket is not None)
     
     def get_service_info(self) -> Dict[str, Any]:
         """Get service capabilities"""
@@ -148,7 +148,7 @@ class SimpleXContactService(ContactManagementService):
         """Check if service is available"""
         return (self.bot and 
                 hasattr(self.bot, 'websocket_manager') and 
-                self.bot.websocket_manager.is_connected)
+                self.bot.websocket_manager.websocket is not None)
     
     def get_service_info(self) -> Dict[str, Any]:
         """Get service capabilities"""
@@ -235,7 +235,7 @@ class SimpleXGroupService(GroupManagementService):
         """Check if service is available"""
         return (self.bot and 
                 hasattr(self.bot, 'websocket_manager') and 
-                self.bot.websocket_manager.is_connected)
+                self.bot.websocket_manager.websocket is not None)
     
     def get_service_info(self) -> Dict[str, Any]:
         """Get service capabilities"""
@@ -442,7 +442,7 @@ class SimpleXNotificationService(NotificationService):
         """Check if service is available"""
         return (self.bot and 
                 hasattr(self.bot, 'websocket_manager') and 
-                self.bot.websocket_manager.is_connected)
+                self.bot.websocket_manager.websocket is not None)
     
     def get_service_info(self) -> Dict[str, Any]:
         """Get service capabilities"""
@@ -580,7 +580,7 @@ class SimpleXPlatformStatusService(PlatformStatusService):
             
             if self.bot:
                 health["websocket_connected"] = (hasattr(self.bot, 'websocket_manager') and 
-                                               self.bot.websocket_manager.is_connected)
+                                               self.bot.websocket_manager.websocket is not None)
                 health["invite_manager_available"] = hasattr(self.bot, 'invite_manager')
                 health["file_manager_available"] = hasattr(self.bot, 'file_download_manager')
                 health["admin_manager_available"] = hasattr(self.bot, 'admin_manager')
