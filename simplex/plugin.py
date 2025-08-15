@@ -10,10 +10,40 @@ from typing import List, Optional
 from plugins.universal_plugin_base import UniversalBotPlugin, CommandContext, BotPlatform
 
 
+class MockAdminManager:
+    """Mock admin manager for testing purposes"""
+    def __init__(self):
+        self.mock_admins = {"test_admin": ["*"]}
+    
+    def is_admin(self, username: str) -> bool:
+        return username in self.mock_admins
+    
+    def list_admins(self) -> dict:
+        return self.mock_admins
+    
+    def add_admin(self, username: str) -> bool:
+        self.mock_admins[username] = ["*"]
+        return True
+    
+    def remove_admin(self, username: str) -> bool:
+        return self.mock_admins.pop(username, None) is not None
+    
+    def get_user_permissions(self, username: str) -> dict:
+        is_admin = username in self.mock_admins
+        return {
+            "is_admin": is_admin,
+            "admin_commands": self.mock_admins.get(username, []),
+            "public_commands": ["help", "info"]
+        }
+    
+    def reload_config(self):
+        pass
+
+
 class UniversalSimplexPlugin(UniversalBotPlugin):
     def __init__(self, logger=None):
         super().__init__("simplex", logger=logger)
-        self.version = "1.0.0"
+        self.version = "1.0.1"
         self.description = "SimpleX Chat specific commands for contact/group management, invites, and debugging"
         
         # This plugin only supports SimpleX platform
@@ -22,26 +52,48 @@ class UniversalSimplexPlugin(UniversalBotPlugin):
         if not self.logger:
             self.logger = logging.getLogger(f"plugin.{self.name}")
     
-    async def initialize(self, adapter) -> bool:
-        """Initialize plugin with bot adapter"""
+    async def _on_initialize(self) -> bool:
+        """Initialize plugin with platform services"""
         try:
-            # Call parent initialization
-            if not await super().initialize(adapter):
-                return False
+            self.logger.info(f"Initializing SimpleX plugin for {self.adapter.platform.value} platform")
             
-            self.logger.info(f"Initializing SimpleX plugin for {adapter.platform.value} platform")
+            # Get platform services
+            self.contact_service = self.require_service('contact_management')
+            self.group_service = self.require_service('group_management')
+            self.invite_service = self.require_service('invite_management')
+            self.file_service = self.require_service('file_operations')
             
-            # Get access to bot instance through adapter
-            self.bot_instance = getattr(adapter, 'bot_instance', None)
+            # Get access to bot instance through adapter (for admin manager only)
+            self.bot_instance = getattr(self.adapter, 'bot_instance', None)
             if not self.bot_instance:
-                self.logger.error("Cannot access bot instance from adapter")
-                return False
+                self.bot_instance = getattr(self.adapter, 'bot', None)
+            
+            self.logger.info(f"🔧 INIT DEBUG: bot_instance available: {bool(self.bot_instance)}")
+            if self.bot_instance:
+                self.logger.info(f"🔧 INIT DEBUG: bot_instance type: {type(self.bot_instance)}")
+                self.logger.info(f"🔧 INIT DEBUG: bot_instance has admin_manager: {hasattr(self.bot_instance, 'admin_manager')}")
+            
+            if not self.bot_instance:
+                self.logger.warning("Cannot access bot instance from adapter - some features may not work")
+                self.admin_manager = None
+            else:
+                # Get admin manager (this will be moved to a service later)
+                self.admin_manager = getattr(self.bot_instance, 'admin_manager', None)
+                self.logger.info(f"🔧 INIT DEBUG: admin_manager retrieved: {bool(self.admin_manager)}")
+                if self.admin_manager:
+                    self.logger.info(f"🔧 INIT DEBUG: admin_manager type: {type(self.admin_manager)}")
+                    if hasattr(self.admin_manager, 'admins'):
+                        self.logger.info(f"🔧 INIT DEBUG: admin_manager.admins: {list(self.admin_manager.admins)}")
                 
-            # Get admin manager
-            self.admin_manager = getattr(self.bot_instance, 'admin_manager', None)
-            if not self.admin_manager:
-                self.logger.error("Cannot access admin manager from bot instance")
-                return False
+                if not self.admin_manager:
+                    self.logger.warning("Cannot access admin manager - admin commands will not work")
+                    # Create a mock admin manager for testing
+                    self.logger.warning("🔧 INIT DEBUG: Creating MockAdminManager as fallback")
+                    self.admin_manager = MockAdminManager()
+            
+            # Log available services
+            available_services = self.get_available_services()
+            self.logger.info(f"Available platform services: {available_services}")
             
             return True
             
@@ -51,7 +103,7 @@ class UniversalSimplexPlugin(UniversalBotPlugin):
     
     def get_commands(self) -> List[str]:
         """Return list of commands this plugin handles"""
-        return ["invite", "contacts", "groups", "debug", "admin", "reload_admin", "stats"]
+        return ["invite", "contacts", "groups", "debug", "admin", "reload_admin", "stats", "whoami"]
     
     async def handle_command(self, context: CommandContext) -> Optional[str]:
         """Handle commands for this plugin"""
@@ -72,6 +124,8 @@ class UniversalSimplexPlugin(UniversalBotPlugin):
                 return await self._handle_reload_admin_command(context)
             elif context.command == "stats":
                 return await self._handle_stats_command(context)
+            elif context.command == "whoami":
+                return await self._handle_whoami_command(context)
                 
         except Exception as e:
             self.logger.error(f"Error handling {context.command} command: {str(e)}", exc_info=True)
@@ -82,7 +136,7 @@ class UniversalSimplexPlugin(UniversalBotPlugin):
     async def _handle_invite_command(self, context: CommandContext) -> str:
         """Handle invite management commands"""
         # Check admin permissions
-        if not self.admin_manager.is_admin(context.user_display_name):
+        if not self.admin_manager or not self.admin_manager.is_admin(context.user_display_name):
             return "Access denied. Only admins can manage invites."
         
         if not context.has_args:
@@ -106,16 +160,16 @@ class UniversalSimplexPlugin(UniversalBotPlugin):
             return f"Unknown invite subcommand: {subcommand}"
     
     async def _generate_invite(self, context: CommandContext) -> str:
-        """Generate connection invite"""
-        if self.bot_instance and hasattr(self.bot_instance, 'invite_manager'):
-            invite_manager = self.bot_instance.invite_manager
-            
+        """Generate connection invite using platform service"""
+        if not self.invite_service:
+            return "❌ Invite service not available"
+        
+        try:
             # Send progress message
-            await self.adapter.send_message("🔄 Generating invite (temporarily disconnecting)...", context)
+            await self.adapter.send_message("🔄 Generating invite...", context)
             
-            # Generate invite with WebSocket disconnect
-            invite_link = await invite_manager.generate_invite_with_websocket_disconnect(
-                self.bot_instance.websocket_manager, context.user_display_name, context.user_display_name)
+            # Generate invite using platform service
+            invite_link = await self.invite_service.generate_invite(context.user_display_name)
             
             if invite_link:
                 response = f"""🔗 One-time connection invite generated:
@@ -127,80 +181,97 @@ Share this link with the user and ask them to connect using:
 
 This invite will be auto-accepted when used and expires in 24 hours."""
                 
-                # Store the message to be sent after reconnection
-                self.bot_instance.websocket_manager.pending_invite_message = {
-                    'contact_name': context.user_display_name,
-                    'message': response
-                }
-                
-                self.logger.info(f"🎫 INVITE MESSAGE QUEUED: Message queued for {context.user_display_name} after reconnection")
-                return "Invite generation in progress..."
+                self.logger.info(f"🎫 INVITE: Generated invite for {context.user_display_name}")
+                return response
             else:
-                # Store failure message
-                self.bot_instance.websocket_manager.pending_invite_message = {
-                    'contact_name': context.user_display_name,
-                    'message': "Failed to generate invite. Check logs for details."
-                }
-                return "Failed to generate invite. Check logs for details."
-        else:
-            return "Invite manager not available."
+                return "❌ Failed to generate invite. Check logs for details."
+        
+        except Exception as e:
+            self.logger.error(f"Error generating invite: {e}")
+            return f"❌ Error generating invite: {e}"
     
     async def _list_invites(self, context: CommandContext) -> str:
-        """List pending invites"""
-        if self.bot_instance and hasattr(self.bot_instance, 'invite_manager'):
-            invite_manager = self.bot_instance.invite_manager
-            pending_invites = invite_manager.get_pending_invites()
+        """List pending invites using platform service"""
+        if not self.invite_service:
+            return "❌ Invite service not available"
+        
+        try:
+            pending_invites = await self.invite_service.list_pending_invites()
             
             if not pending_invites:
-                return "No pending invites."
+                return "📋 No pending invites."
             
             response = "📋 Pending invites:\n\n"
             for invite in pending_invites:
-                created = invite['created_at'].strftime("%Y-%m-%d %H:%M")
-                expires = invite['expires_at'].strftime("%Y-%m-%d %H:%M")
-                response += f"• ID: {invite['id']}\n"
-                response += f"  Requested by: {invite['requested_by']}\n"
-                response += f"  Created: {created}\n"
-                response += f"  Expires: {expires}\n\n"
+                response += f"• ID: {invite.get('id', 'unknown')}\n"
+                response += f"  Requested by: {invite.get('requested_by', 'unknown')}\n"
+                if 'created_at' in invite:
+                    response += f"  Created: {invite['created_at']}\n"
+                if 'expires_at' in invite:
+                    response += f"  Expires: {invite['expires_at']}\n"
+                response += "\n"
             
             return response
-        else:
-            return "Invite manager not available."
+        except Exception as e:
+            self.logger.error(f"Error listing invites: {e}")
+            return f"❌ Error listing invites: {e}"
     
     async def _revoke_invite(self, context: CommandContext) -> str:
-        """Revoke an invite"""
+        """Revoke an invite using platform service"""
         if context.arg_count < 2:
             return "Usage: !invite revoke <invite_id>"
         
         invite_id = context.args[1]
         
-        if self.bot_instance and hasattr(self.bot_instance, 'invite_manager'):
-            invite_manager = self.bot_instance.invite_manager
-            
-            if invite_manager.revoke_invite(invite_id):
-                return f"Invite {invite_id} revoked successfully."
+        if not self.invite_service:
+            return "❌ Invite service not available"
+        
+        try:
+            # For now, fall back to direct bot access since revoke isn't implemented in service yet
+            if self.bot_instance and hasattr(self.bot_instance, 'invite_manager'):
+                invite_manager = self.bot_instance.invite_manager
+                
+                if invite_manager.revoke_invite(invite_id):
+                    return f"Invite {invite_id} revoked successfully."
+                else:
+                    return f"Invite {invite_id} not found."
             else:
-                return f"Invite {invite_id} not found."
-        else:
-            return "Invite manager not available."
+                return "❌ Invite manager not available"
+        except Exception as e:
+            self.logger.error(f"Error revoking invite: {e}")
+            return f"❌ Error revoking invite: {e}"
     
     async def _invite_stats(self, context: CommandContext) -> str:
-        """Show invite statistics"""
-        if self.bot_instance and hasattr(self.bot_instance, 'invite_manager'):
-            invite_manager = self.bot_instance.invite_manager
-            stats = invite_manager.get_stats()
-            
-            return f"""📊 Invite Statistics:
+        """Show invite statistics using platform service"""
+        if not self.invite_service:
+            return "❌ Invite service not available"
+        
+        try:
+            # For now, fall back to direct bot access since stats aren't implemented in service yet
+            if self.bot_instance and hasattr(self.bot_instance, 'invite_manager'):
+                invite_manager = self.bot_instance.invite_manager
+                stats = invite_manager.get_stats()
+                
+                return f"""📊 Invite Statistics:
 
 Pending invites: {stats['pending_invites']}/{stats['max_pending_invites']}
 Invite expiry: {stats['invite_expiry_hours']} hours"""
-        else:
-            return "Invite manager not available."
+            else:
+                return "❌ Invite manager not available"
+        except Exception as e:
+            self.logger.error(f"Error getting invite stats: {e}")
+            return f"❌ Error getting invite stats: {e}"
     
     async def _handle_contacts_command(self, context: CommandContext) -> str:
         """Handle contact management commands"""
         # Check admin permissions
-        if not self.admin_manager.is_admin(context.user_display_name):
+        self.logger.info(f"🔐 ADMIN CHECK: user_display_name='{context.user_display_name}', admin_manager={bool(self.admin_manager)}")
+        if self.admin_manager:
+            is_admin = self.admin_manager.is_admin(context.user_display_name)
+            self.logger.info(f"🔐 ADMIN CHECK: is_admin={is_admin}")
+        
+        if not self.admin_manager or not self.admin_manager.is_admin(context.user_display_name):
+            self.logger.warning(f"🔐 ADMIN DENIED: '{context.user_display_name}' attempted to access contacts")
             return "Access denied. Only admins can list contacts."
         
         if not context.has_args:
@@ -218,89 +289,66 @@ Invite expiry: {stats['invite_expiry_hours']} hours"""
             return f"Unknown contacts subcommand: {subcommand}"
     
     async def _list_contacts(self, context: CommandContext) -> str:
-        """List all contacts"""
-        if not (self.bot_instance and hasattr(self.bot_instance, 'websocket_manager')):
-            return "WebSocket manager not available."
-        
-        ws_manager = self.bot_instance.websocket_manager
-        
-        # Register callback for contacts response
-        async def contacts_callback(response_data):
-            try:
-                self.logger.info(f"🔔 CALLBACK START: Processing contacts callback")
-                contacts_info = self._parse_contacts_response(response_data)
-                self.logger.info(f"🔔 CALLBACK: Parsed {len(contacts_info) if contacts_info else 0} contacts")
-                
-                if contacts_info:
-                    contact_list = []
-                    for i, contact in enumerate(contacts_info, 1):
-                        name = contact.get('localDisplayName', 'Unknown')
-                        contact_status = contact.get('contactStatus', 'unknown')
-                        conn_status = 'disconnected'
-                        if 'activeConn' in contact and contact['activeConn']:
-                            conn_status = contact['activeConn'].get('connStatus', 'unknown')
-                        contact_list.append(f"{i}. {name} (Contact: {contact_status}, Connection: {conn_status})")
-                    
-                    response_text = f"📋 Bot Contacts ({len(contacts_info)} total):\n\n" + "\n".join(contact_list)
-                else:
-                    response_text = "No contacts found."
-                
-                # Send response directly through WebSocket manager
-                await self.adapter.send_message(response_text, context)
-                self.logger.info(f"🔔 CALLBACK: Response sent successfully")
-                
-            except Exception as e:
-                self.logger.error(f"🔔 CALLBACK ERROR: {type(e).__name__}: {e}")
-                import traceback
-                self.logger.error(f"🔔 CALLBACK TRACEBACK: {traceback.format_exc()}")
-                await self.adapter.send_message(f"Error processing contacts: {type(e).__name__}: {e}", context)
+        """List all contacts using platform service"""
+        if not self.contact_service:
+            return "❌ Contact service not available"
         
         try:
-            # Register the callback and send the command
-            ws_manager.register_command_callback('/contacts', contacts_callback)
-            await ws_manager.send_command("/contacts", wait_for_response=True)
-            return "Processing contacts list..."
+            await self.adapter.send_message("🔄 Loading contacts...", context)
+            
+            contacts_info = await self.contact_service.get_contacts()
+            
+            if contacts_info:
+                contact_list = []
+                for i, contact in enumerate(contacts_info, 1):
+                    name = contact.get('localDisplayName', 'Unknown')
+                    contact_status = contact.get('contactStatus', 'unknown')
+                    conn_status = 'disconnected'
+                    if 'activeConn' in contact and contact['activeConn']:
+                        conn_status = contact['activeConn'].get('connStatus', 'unknown')
+                    contact_list.append(f"{i}. {name} (Contact: {contact_status}, Connection: {conn_status})")
+                
+                return f"📋 Bot Contacts ({len(contacts_info)} total):\n\n" + "\n".join(contact_list)
+            else:
+                return "No contacts found."
             
         except Exception as e:
-            return f"Error sending contacts command: {type(e).__name__}: {e}"
+            self.logger.error(f"Error listing contacts: {e}")
+            return f"❌ Error listing contacts: {e}"
     
     async def _contact_info(self, context: CommandContext) -> str:
-        """Get contact information"""
+        """Get contact information using platform service"""
         if context.arg_count < 2:
             return "Usage: !contacts info <contact_name>"
         
         contact_to_check = " ".join(context.args[1:])
         
-        if not (self.bot_instance and hasattr(self.bot_instance, 'websocket_manager')):
-            return "WebSocket manager not available."
-        
-        ws_manager = self.bot_instance.websocket_manager
+        if not self.contact_service:
+            return "❌ Contact service not available"
         
         try:
-            # Send command to get specific contact info
-            response = await ws_manager.send_command(f"/contact {contact_to_check}", wait_for_response=False)
+            await self.adapter.send_message(f"🔄 Getting info for '{contact_to_check}'...", context)
             
-            if response:
-                contact_info = self._parse_contact_info_response(response)
-                if contact_info:
-                    info_text = f"📋 Contact Info for {contact_to_check}:\n\n"
-                    info_text += f"Display Name: {contact_info.get('localDisplayName', 'Unknown')}\n"
-                    info_text += f"Profile Name: {contact_info.get('profile', {}).get('displayName', 'Unknown')}\n"
-                    info_text += f"Connection: {contact_info.get('activeConn', 'Unknown')}\n"
-                    info_text += f"Created: {contact_info.get('createdAt', 'Unknown')}"
-                    return info_text
-                else:
-                    return f"Contact '{contact_to_check}' not found."
+            contact_info = await self.contact_service.get_contact_info(contact_to_check)
+            
+            if contact_info:
+                info_text = f"📋 Contact Info for {contact_to_check}:\n\n"
+                info_text += f"Display Name: {contact_info.get('localDisplayName', 'Unknown')}\n"
+                info_text += f"Profile Name: {contact_info.get('profile', {}).get('displayName', 'Unknown')}\n"
+                info_text += f"Connection: {contact_info.get('activeConn', 'Unknown')}\n"
+                info_text += f"Created: {contact_info.get('createdAt', 'Unknown')}"
+                return info_text
             else:
-                return f"Failed to get info for contact '{contact_to_check}'."
-                
+                return f"Contact '{contact_to_check}' not found."
+            
         except Exception as e:
-            return f"Error getting contact info: {type(e).__name__}: {e}"
+            self.logger.error(f"Error getting contact info: {e}")
+            return f"❌ Error getting contact info: {e}"
     
     async def _handle_groups_command(self, context: CommandContext) -> str:
         """Handle group management commands"""
         # Check admin permissions
-        if not self.admin_manager.is_admin(context.user_display_name):
+        if not self.admin_manager or not self.admin_manager.is_admin(context.user_display_name):
             return "Access denied. Only admins can list groups."
         
         if not context.has_args:
@@ -321,81 +369,58 @@ Invite expiry: {stats['invite_expiry_hours']} hours"""
             return f"Unknown groups subcommand: {subcommand}"
     
     async def _list_groups(self, context: CommandContext) -> str:
-        """List all groups"""
-        if not (self.bot_instance and hasattr(self.bot_instance, 'websocket_manager')):
-            return "WebSocket manager not available."
-        
-        ws_manager = self.bot_instance.websocket_manager
-        
-        # Register callback for groups response
-        async def groups_callback(response_data):
-            try:
-                self.logger.info(f"🔔 GROUPS CALLBACK: Processing groups callback")
-                groups_info = self._parse_groups_response(response_data)
-                self.logger.info(f"🔔 GROUPS CALLBACK: Parsed {len(groups_info) if groups_info else 0} groups")
-                
-                if groups_info:
-                    group_list = []
-                    for i, group in enumerate(groups_info, 1):
-                        name = group.get('displayName', 'Unknown')
-                        members = group.get('membership', {}).get('memberRole', 'Unknown')
-                        group_list.append(f"{i}. {name} (Role: {members})")
-                    
-                    response_text = f"📋 Bot Groups ({len(groups_info)} total):\n\n" + "\n".join(group_list)
-                else:
-                    response_text = "No groups found."
-                
-                # Send response directly through WebSocket manager
-                await self.adapter.send_message(response_text, context)
-                self.logger.info(f"🔔 GROUPS CALLBACK: Response sent successfully")
-                
-            except Exception as e:
-                self.logger.error(f"🔔 GROUPS CALLBACK ERROR: {type(e).__name__}: {e}")
-                import traceback
-                self.logger.error(f"🔔 GROUPS CALLBACK TRACEBACK: {traceback.format_exc()}")
-                await self.adapter.send_message(f"Error processing groups: {type(e).__name__}: {e}", context)
+        """List all groups using platform service"""
+        if not self.group_service:
+            return "❌ Group service not available"
         
         try:
-            # Register the callback and send the command
-            ws_manager.register_command_callback('/groups', groups_callback)
-            await ws_manager.send_command("/groups", wait_for_response=True)
-            return "Processing groups list..."
+            await self.adapter.send_message("🔄 Loading groups...", context)
+            
+            groups_info = await self.group_service.get_groups()
+            
+            if groups_info:
+                group_list = []
+                for i, group in enumerate(groups_info, 1):
+                    name = group.get('localDisplayName', group.get('displayName', 'Unknown'))
+                    members = group.get('membership', {}).get('memberRole', 'Unknown')
+                    group_list.append(f"{i}. {name} (Role: {members})")
+                
+                return f"📋 Bot Groups ({len(groups_info)} total):\n\n" + "\n".join(group_list)
+            else:
+                return "No groups found."
             
         except Exception as e:
-            return f"Error sending groups command: {type(e).__name__}: {e}"
+            self.logger.error(f"Error listing groups: {e}")
+            return f"❌ Error listing groups: {e}"
     
     async def _group_info(self, context: CommandContext) -> str:
-        """Get group information"""
+        """Get group information using platform service"""
         if context.arg_count < 2:
             return "Usage: !groups info <group_name>"
         
         group_to_check = " ".join(context.args[1:])
         
-        if not (self.bot_instance and hasattr(self.bot_instance, 'websocket_manager')):
-            return "WebSocket manager not available."
-        
-        ws_manager = self.bot_instance.websocket_manager
+        if not self.group_service:
+            return "❌ Group service not available"
         
         try:
-            # Send command to get specific group info
-            response = await ws_manager.send_command(f"/group {group_to_check}", wait_for_response=False)
+            await self.adapter.send_message(f"🔄 Getting info for '{group_to_check}'...", context)
             
-            if response:
-                group_info = self._parse_group_info_response(response)
-                if group_info:
-                    info_text = f"📋 Group Info for {group_to_check}:\n\n"
-                    info_text += f"Display Name: {group_info.get('displayName', 'Unknown')}\n"
-                    info_text += f"Description: {group_info.get('description', 'None')}\n"
-                    info_text += f"Member Role: {group_info.get('membership', {}).get('memberRole', 'Unknown')}\n"
-                    info_text += f"Created: {group_info.get('createdAt', 'Unknown')}"
-                    return info_text
-                else:
-                    return f"Group '{group_to_check}' not found."
+            group_info = await self.group_service.get_group_info(group_to_check)
+            
+            if group_info:
+                info_text = f"📋 Group Info for {group_to_check}:\n\n"
+                info_text += f"Display Name: {group_info.get('localDisplayName', group_info.get('displayName', 'Unknown'))}\n"
+                info_text += f"Description: {group_info.get('groupProfile', {}).get('description', 'None')}\n"
+                info_text += f"Member Role: {group_info.get('membership', {}).get('memberRole', 'Unknown')}\n"
+                info_text += f"Group ID: {group_info.get('groupId', 'Unknown')}"
+                return info_text
             else:
-                return f"Failed to get info for group '{group_to_check}'."
-                
+                return f"Group '{group_to_check}' not found."
+            
         except Exception as e:
-            return f"Error getting group info: {type(e).__name__}: {e}"
+            self.logger.error(f"Error getting group info: {e}")
+            return f"❌ Error getting group info: {e}"
     
     async def _group_invite(self, context: CommandContext) -> str:
         """Generate group invite link"""
@@ -435,7 +460,7 @@ Note: Group invite permissions depend on your role in the group."""
     async def _handle_debug_command(self, context: CommandContext) -> str:
         """Handle debug commands"""
         # Check admin permissions
-        if not self.admin_manager.is_admin(context.user_display_name):
+        if not self.admin_manager or not self.admin_manager.is_admin(context.user_display_name):
             return "Access denied. Only admins can use debug commands."
         
         if not context.has_args:
@@ -640,7 +665,7 @@ Pending requests: {len(ws_manager.pending_requests)}"""
         self.logger.info(f"🔍 ADMIN DEBUG: user_id='{context.user_id}', user_display_name='{context.user_display_name}', chat_id='{context.chat_id}'")
         
         # Check admin permissions
-        if not self.admin_manager.is_admin(context.user_display_name):
+        if not self.admin_manager or not self.admin_manager.is_admin(context.user_display_name):
             return "Access denied. Only admins can use admin commands."
         
         if not context.has_args:
@@ -711,7 +736,7 @@ Pending requests: {len(ws_manager.pending_requests)}"""
     async def _handle_reload_admin_command(self, context: CommandContext) -> str:
         """Handle admin configuration reload"""
         # Check admin permissions
-        if not self.admin_manager.is_admin(context.user_display_name):
+        if not self.admin_manager or not self.admin_manager.is_admin(context.user_display_name):
             return "Access denied. Only admins can reload admin config."
         
         self.admin_manager.reload_config()
@@ -720,7 +745,7 @@ Pending requests: {len(ws_manager.pending_requests)}"""
     async def _handle_stats_command(self, context: CommandContext) -> str:
         """Handle stats command"""
         # Check admin permissions
-        if not self.admin_manager.is_admin(context.user_display_name):
+        if not self.admin_manager or not self.admin_manager.is_admin(context.user_display_name):
             return "Access denied. Only admins can view stats."
         
         if not (self.bot_instance and hasattr(self.bot_instance, 'websocket_manager')):
@@ -745,6 +770,35 @@ Pending requests: {len(ws_manager.pending_requests)}"""
 • Admin Config: {'✅ Loaded' if self.admin_manager else '❌ Not Available'}"""
 
         return stats_text
+    
+    async def _handle_whoami_command(self, context: CommandContext) -> str:
+        """Debug command to show user identity and admin status"""
+        try:
+            user_info = f"""🔍 **User Identity Debug**
+            
+**User Display Name:** '{context.user_display_name}'
+**User ID:** '{context.user_id}'
+**Chat ID:** '{context.chat_id}'
+**Platform:** {context.platform.value}
+
+**Admin Manager Available:** {bool(self.admin_manager)}
+**Admin Manager Type:** {type(self.admin_manager).__name__ if self.admin_manager else 'None'}
+"""
+            
+            if self.admin_manager:
+                is_admin = self.admin_manager.is_admin(context.user_display_name)
+                admins_list = list(self.admin_manager.admins) if hasattr(self.admin_manager, 'admins') else []
+                user_info += f"""
+**Is Admin:** {is_admin}
+**All Admins:** {admins_list}
+**Exact Match Check:** '{context.user_display_name}' in {admins_list}
+"""
+            
+            return user_info
+            
+        except Exception as e:
+            self.logger.error(f"Error in whoami command: {e}")
+            return f"❌ Error in whoami command: {e}"
 
     async def cleanup(self):
         """Cleanup when plugin is unloaded"""

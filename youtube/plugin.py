@@ -114,14 +114,14 @@ class UniversalYouTubePlugin(UniversalBotPlugin):
             }
         }
     
-    async def initialize(self, adapter) -> bool:
+    async def _on_initialize(self) -> bool:
         """Initialize the plugin with bot adapter"""
         try:
             # Call parent initialization
-            if not await super().initialize(adapter):
-                return False
+            # Parent initialization handled automatically
+                #return False
             
-            self.logger.info(f"Initializing YouTube plugin for {adapter.platform.value} platform")
+            self.logger.info(f"Initializing YouTube plugin for {self.adapter.platform.value} platform")
             
             # Check for required API key
             api_key = os.getenv("OPENROUTER_API_KEY")
@@ -132,7 +132,7 @@ class UniversalYouTubePlugin(UniversalBotPlugin):
             
         except Exception as e:
             self.logger.error(f"Failed to initialize YouTube plugin: {e}")
-            return False
+            #return False
     
     def get_commands(self) -> List[str]:
         """Return list of commands this plugin handles"""
@@ -502,7 +502,7 @@ class UniversalYouTubePlugin(UniversalBotPlugin):
         for pattern in self.get_youtube_patterns():
             if re.search(pattern, text):
                 return True
-        return False
+        #return False
     
     async def _extract_youtube_subtitles(self, url: str) -> Optional[str]:
         """Extract subtitles from YouTube video using yt-dlp"""

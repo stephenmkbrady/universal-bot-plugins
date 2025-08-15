@@ -70,8 +70,8 @@ class LoupePlugin(UniversalBotPlugin):
         self.version = "1.0.0"
         self.description = "Configurable web scraper with HTML to text conversion"
         
-        # Supports all platforms
-        self.supported_platforms = [BotPlatform.MATRIX, BotPlatform.SIMPLEX]
+        # Universal web scraper - supports all platforms
+        self.supported_platforms = []  # Empty means supports all platforms
         
         if not self.logger:
             self.logger = logging.getLogger(f"plugin.{self.name}")
@@ -185,14 +185,10 @@ class LoupePlugin(UniversalBotPlugin):
             self.logger.error(f"Error saving configuration: {e}")
             raise
     
-    async def initialize(self, adapter) -> bool:
+    async def _on_initialize(self) -> bool:
         """Initialize plugin with bot adapter"""
         try:
-            if not await super().initialize(adapter):
-                return False
-            
-            self.adapter = adapter
-            self.logger.info(f"Initializing loupe plugin for {adapter.platform.value} platform")
+            self.logger.info(f"Initializing loupe plugin for {self.adapter.platform.value} platform")
             self.logger.info(f"Configured sites: {list(self.sites.keys())}")
             
             # Start monitoring tasks
@@ -641,12 +637,24 @@ For complete documentation, see COMPLETE_COMMANDS.md in the plugin directory.
             # Auto-configure notifications based on context
             notification_info = []
             if context:
-                # Determine if this is a group message by checking raw_message data
+                # Determine if this is a group message using platform-agnostic approach
                 is_group_message = False
-                if hasattr(context, 'raw_message') and context.raw_message:
-                    # Check for groupInfo in the chat_info (SimpleX-specific logic)
-                    chat_info = context.raw_message.get('chatInfo', {})
-                    is_group_message = "groupInfo" in chat_info
+                
+                # Use group service to detect if this is a group context
+                group_service = self.require_service('group_management')
+                if group_service:
+                    try:
+                        groups = await group_service.get_groups()
+                        is_group_message = any(group.get('localDisplayName') == context.chat_id or 
+                                             group.get('displayName') == context.chat_id or
+                                             group.get('groupId') == context.chat_id 
+                                             for group in groups)
+                    except Exception:
+                        # Fallback to heuristic detection
+                        is_group_message = context.chat_id != context.user_id
+                else:
+                    # Fallback to simple heuristic when no group service available
+                    is_group_message = context.chat_id != context.user_id
                 
                 if is_group_message:
                     # In a group: add both the group and the user
@@ -934,9 +942,9 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
                 notify_users.append(context.user_display_name)
             
             # Check if this was run in a group chat
-            is_group_chat = self._is_group_chat(context)
+            is_group_chat = await self._is_group_chat(context)
             if is_group_chat:
-                group_name = self._get_group_name(context)
+                group_name = await self._get_group_name(context)
                 if group_name:
                     notify_groups.append(group_name)
             
@@ -978,31 +986,37 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
             self.logger.error(f"Error adding site {site_id}: {e}")
             return f"❌ Error adding site: {str(e)}"
     
-    def _is_group_chat(self, context) -> bool:
-        """Check if the command was run in a group chat"""
-        # For SimpleX, check if chat_id is different from user_id or has group indicators
-        # This is a heuristic approach - you may need to adjust based on actual context structure
-        if hasattr(context, 'raw_message') and context.raw_message:
-            # Check if there's group information in the raw message
-            chat_info = context.raw_message.get('chatInfo', {})
-            if chat_info.get('chatType') == 'group':
-                return True
-            
-            # Check for group member information
-            chat_item = context.raw_message.get('chatItem', {})
-            chat_dir = chat_item.get('chatDir', {})
-            if 'groupMember' in chat_dir:
-                return True
+    async def _is_group_chat(self, context) -> bool:
+        """Check if the command was run in a group chat (platform-agnostic)"""
+        # Use group service for platform-agnostic group detection
+        group_service = self.require_service('group_management')
+        if group_service:
+            try:
+                groups = await group_service.get_groups()
+                return any(group.get('localDisplayName') == context.chat_id or 
+                          group.get('displayName') == context.chat_id or
+                          group.get('groupId') == context.chat_id 
+                          for group in groups)
+            except Exception:
+                pass
         
-        # Fallback: if chat_id != user_id, it might be a group
+        # Fallback heuristic: if chat_id differs from user_id, likely a group
         return context.chat_id != context.user_id
     
-    def _get_group_name(self, context) -> str:
-        """Get the group name from context"""
-        if hasattr(context, 'raw_message') and context.raw_message:
-            # Try to get group name from chat info
-            chat_info = context.raw_message.get('chatInfo', {})
-            group_profile = chat_info.get('groupProfile', {})
+    async def _get_group_name(self, context) -> str:
+        """Get the group name from context (platform-agnostic)"""
+        # Use group service to get group name
+        group_service = self.require_service('group_management')
+        if group_service:
+            try:
+                groups = await group_service.get_groups()
+                for group in groups:
+                    if (group.get('localDisplayName') == context.chat_id or 
+                        group.get('displayName') == context.chat_id or
+                        group.get('groupId') == context.chat_id):
+                        return group.get('localDisplayName') or group.get('displayName', context.chat_id)
+            except Exception:
+                pass
             if group_profile.get('displayName'):
                 return group_profile['displayName']
             
@@ -1338,7 +1352,7 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
             return 'groupInfo' in chat_info
         except Exception as e:
             self.logger.debug(f"Error checking group context: {e}")
-            return False
+            #return False
     
     async def _fetch_with_fallback(self, url: str, site_name: str) -> tuple[str, str]:
         """Fetch webpage with aiohttp, fallback to cloudscraper for challenges
@@ -1828,21 +1842,69 @@ Use `!loupe diff-mode {site_id} <mode>` to change the diff mode."""
         notify_groups = site_config.get('notify_groups', [])
         notify_users = site_config.get('notify_users', [])
         
-        # Send to groups
-        for group_name in notify_groups:
+        # Use platform service for notifications (platform-agnostic)
+        notification_service = self.require_service('notification')
+        if notification_service:
             try:
-                await self.adapter.bot.websocket_manager.send_message(group_name, message, is_group=True)
-                self.logger.info(f"📤 Sent notification to group: {group_name}")
+                # Use bulk notification service
+                targets = {}
+                if notify_groups:
+                    targets['groups'] = notify_groups
+                if notify_users:
+                    targets['users'] = notify_users
+                
+                results = await notification_service.bulk_notify(targets, message)
+                
+                # Log results
+                if 'groups' in results:
+                    for group, success in results['groups'].items():
+                        if success:
+                            self.logger.info(f"📤 Sent notification to group: {group}")
+                        else:
+                            self.logger.error(f"❌ Failed to send to group '{group}'")
+                
+                if 'users' in results:
+                    for user, success in results['users'].items():
+                        if success:
+                            self.logger.info(f"📤 Sent notification to user: {user}")
+                        else:
+                            self.logger.error(f"❌ Failed to send to user '{user}'")
+                            
             except Exception as e:
-                self.logger.error(f"❌ Failed to send to group '{group_name}': {e}")
-        
-        # Send to users
-        for user_name in notify_users:
-            try:
-                await self.adapter.bot.websocket_manager.send_message(user_name, message, is_group=False)
-                self.logger.info(f"📤 Sent notification to user: {user_name}")
-            except Exception as e:
-                self.logger.error(f"❌ Failed to send to user '{user_name}': {e}")
+                self.logger.error(f"❌ Notification service error: {e}")
+        else:
+            # Fallback to adapter pattern (still platform-agnostic)
+            self.logger.warning("📤 No notification service available, using adapter fallback")
+            
+            # Create a temporary context for adapter usage
+            from plugins.universal_plugin_base import CommandContext, BotPlatform
+            temp_context = CommandContext(
+                command="notification",
+                args=[],
+                args_raw="",
+                user_id="system",
+                chat_id="system",
+                user_display_name="System",
+                platform=self.adapter.platform,  # Dynamic platform detection
+                raw_message={}
+            )
+            
+            # Send to groups and users via adapter
+            for group_name in notify_groups:
+                try:
+                    temp_context.chat_id = group_name
+                    await self.adapter.send_message(message, temp_context)
+                    self.logger.info(f"📤 Sent notification to group: {group_name}")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to send to group '{group_name}': {e}")
+            
+            for user_name in notify_users:
+                try:
+                    temp_context.chat_id = user_name
+                    await self.adapter.send_message(message, temp_context)
+                    self.logger.info(f"📤 Sent notification to user: {user_name}")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to send to user '{user_name}': {e}")
         
         # Log summary
         total_targets = len(notify_groups) + len(notify_users)

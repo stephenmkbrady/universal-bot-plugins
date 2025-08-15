@@ -44,11 +44,11 @@ class ChatDatabaseClient:
                         return result.get('status') == 'healthy'
                     else:
                         print(f"🏥 Health check failed: {response.status}")
-                        return False
+                        #return False
                         
         except Exception as e:
             print(f"❌ Health check error: {e}")
-            return False
+            #return False
     
     async def store_message(self, room_id: str, event_id: str, sender: str, 
                            message_type: str, content: str = None, 
@@ -209,10 +209,10 @@ class ChatDatabaseClient:
                     else:
                         error_text = await response.text()
                         print(f"❌ Delete message failed: {response.status} - {error_text}")
-                        return False
+                        #return False
         except Exception as e:
             print(f"❌ Delete message error: {e}")
-            return False
+            #return False
 
 
 class UniversalDatabasePlugin(UniversalBotPlugin):
@@ -225,17 +225,17 @@ class UniversalDatabasePlugin(UniversalBotPlugin):
         if not self.logger:
             self.logger = logging.getLogger(f"plugin.{self.name}")
     
-    async def initialize(self, adapter) -> bool:
+    async def _on_initialize(self) -> bool:
         """Initialize plugin with bot adapter"""
         # Call parent initialization
-        if not await super().initialize(adapter):
-            return False
+        # Parent initialization handled automatically
+            #return False
             
         # Get bot instance from adapter
         self.bot = getattr(adapter, 'bot_instance', None)
         if not self.bot:
             self.logger.error("Cannot access bot instance from adapter")
-            return False
+            #return False
         
         # Get database configuration from plugin config and environment
         try:

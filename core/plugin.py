@@ -23,21 +23,17 @@ class UniversalCorePlugin(UniversalBotPlugin):
         # Core plugin should always be enabled
         self.enabled = True
         
-        # Supports all platforms
-        self.supported_platforms = [BotPlatform.MATRIX, BotPlatform.SIMPLEX]
+        # Universal plugin - supports all platforms
+        self.supported_platforms = []  # Empty means supports all platforms
         
         if not self.logger:
             self.logger = logging.getLogger(f"plugin.{self.name}")
         self.start_time = datetime.now()
     
-    async def initialize(self, adapter) -> bool:
+    async def _on_initialize(self) -> bool:
         """Initialize plugin with bot adapter"""
         try:
-            # Call parent initialization
-            if not await super().initialize(adapter):
-                return False
-            
-            self.logger.info(f"Initializing core plugin for {adapter.platform.value} platform")
+            self.logger.info(f"Initializing core plugin for {self.adapter.platform.value} platform")
             self.start_time = datetime.now()
             return True
             
@@ -407,28 +403,42 @@ class UniversalCorePlugin(UniversalBotPlugin):
 **Display Name:** {context.user_display_name}
 """
         
-        # Add platform-specific details
-        if context.platform == BotPlatform.SIMPLEX:
-            bot = self.adapter.bot
-            platform_info += f"""
-**SimpleX Features:**
-• End-to-end encrypted messaging
-• No central servers or user databases
-• XFTP for file transfers
-• Contact-based communication
+        # Add platform-agnostic details using services
+        status_service = self.require_service('platform_status')
+        if status_service:
+            try:
+                connection_info = await status_service.get_connection_info()
+                health_info = await status_service.get_platform_health()
+                
+                platform_name = connection_info.get('platform', 'Unknown Platform')
+                
+                platform_info += f"""
+**Platform:** {platform_name}
 
-**Bot Configuration:**
-• WebSocket URL: {getattr(bot.websocket_manager, 'websocket_url', 'N/A') if hasattr(bot, 'websocket_manager') else 'N/A'}
-• Media Downloads: {'✅ Enabled' if hasattr(bot, 'file_download_manager') and bot.file_download_manager.media_enabled else '❌ Disabled'}
-• XFTP Client: {'✅ Available' if hasattr(bot, 'xftp_client') else '❌ Not Available'}"""
-            
-        elif context.platform == BotPlatform.MATRIX:
+**Connection Status:**
+• Status: {'✅ Connected' if connection_info.get('connected', False) else '❌ Disconnected'}
+• Health: {health_info.get('status', 'unknown').title()}
+• Services: {'✅ Operational' if health_info.get('websocket_connected', health_info.get('connected', False)) else '⚠️ Limited'}"""
+
+                # Add connection details if available
+                if 'websocket_url' in connection_info:
+                    platform_info += f"""
+• Connection URL: {connection_info.get('websocket_url', 'N/A')}"""
+                
+                if 'server' in connection_info:
+                    platform_info += f"""
+• Server: {connection_info.get('server', 'N/A')}"""
+                    
+            except Exception as e:
+                platform_info += f"""
+**Platform Status:**
+• Status: ⚠️ Unable to get platform details
+• Error: {str(e)}"""
+        else:
             platform_info += f"""
-**Matrix Features:**
-• Federated network
-• Room-based communication  
-• Rich media and formatting support
-• End-to-end encryption support"""
+**Platform Status:**
+• Status: ⚠️ Platform status service not available
+• Services: Limited diagnostic information"""
         
         return platform_info
     

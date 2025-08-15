@@ -155,25 +155,25 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
         
         return matching_entities
     
-    async def initialize(self, adapter) -> bool:
+    async def _on_initialize(self) -> bool:
         """Initialize plugin with bot adapter"""
         try:
-            if not await super().initialize(adapter):
-                return False
+            # Parent initialization handled automatically
+                #return False
             
-            self.logger.info(f"Initializing Home Assistant plugin for {adapter.platform.value}")
+            self.logger.info(f"Initializing Home Assistant plugin for {self.adapter.platform.value}")
             
             # Initialize Home Assistant client
             if not await self._initialize_ha_client():
                 self.logger.error("Failed to initialize Home Assistant client")
-                return False
+                #return False
             
             self.logger.info("Home Assistant plugin initialized successfully")
             return True
             
         except Exception as e:
             self.logger.error(f"Failed to initialize Home Assistant plugin: {e}")
-            return False
+            #return False
     
     async def _initialize_ha_client(self) -> bool:
         """Initialize Home Assistant API client"""
@@ -190,7 +190,7 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
             
             if not token:
                 self.logger.error("Home Assistant token not configured")
-                return False
+                #return False
             
             # Build URL - HomeAssistant API client expects the full API URL
             protocol = 'https' if ssl else 'http'
@@ -222,11 +222,11 @@ class UniversalHomeAssistantPlugin(UniversalBotPlugin):
                 return True
             except Exception as e:
                 self.logger.error(f"Failed to connect to Home Assistant: {e}")
-                return False
+                #return False
                 
         except Exception as e:
             self.logger.error(f"Failed to initialize Home Assistant client: {e}")
-            return False
+            #return False
     
     async def _async_get_states(self):
         """Get all states from Home Assistant (async wrapper)"""

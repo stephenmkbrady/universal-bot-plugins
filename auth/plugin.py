@@ -31,14 +31,14 @@ class UniversalAuthPlugin(UniversalBotPlugin):
         self.api_base_url = None
         self.api_key = None
     
-    async def initialize(self, adapter) -> bool:
+    async def _on_initialize(self) -> bool:
         """Initialize the plugin with bot adapter"""
         try:
             # Call parent initialization
-            if not await super().initialize(adapter):
-                return False
+            # Parent initialization handled automatically
+                #return False
             
-            self.logger.info(f"Initializing Auth plugin for {adapter.platform.value} platform")
+            self.logger.info(f"Initializing Auth plugin for {self.adapter.platform.value} platform")
             
             # Get API configuration from environment
             self.api_base_url = os.getenv("DATABASE_API_URL", os.getenv("DATABASE_URL", "http://localhost:8000")).rstrip('/')
@@ -51,7 +51,7 @@ class UniversalAuthPlugin(UniversalBotPlugin):
             
         except Exception as e:
             self.logger.error(f"Failed to initialize Auth plugin: {e}")
-            return False
+            #return False
     
     def get_commands(self) -> List[str]:
         """Return list of commands this plugin handles"""
@@ -141,7 +141,7 @@ You now have access to authenticated database features.
             data = {
                 "room_id": room_id,
                 "user_name": user_name,
-                "platform": self.adapter.platform.value,
+                "platform": self.self.adapter.platform.value,
                 "timestamp": datetime.now().isoformat()
             }
             
@@ -170,7 +170,7 @@ You now have access to authenticated database features.
                 "room_id": room_id,
                 "pin": pin,
                 "user_name": user_name,
-                "platform": self.adapter.platform.value,
+                "platform": self.self.adapter.platform.value,
                 "timestamp": datetime.now().isoformat()
             }
             
@@ -181,11 +181,11 @@ You now have access to authenticated database features.
                         return result.get("valid", False)
                     else:
                         self.logger.error(f"PIN verification failed: {response.status}")
-                        return False
+                        #return False
                         
         except Exception as e:
             self.logger.error(f"Error verifying PIN: {e}")
-            return False
+            #return False
     
     async def is_user_authenticated(self, room_id: str, user_name: str) -> bool:
         """Check if user is authenticated in a room"""
@@ -199,7 +199,7 @@ You now have access to authenticated database features.
             data = {
                 "room_id": room_id,
                 "user_name": user_name,
-                "platform": self.adapter.platform.value
+                "platform": self.self.adapter.platform.value
             }
             
             async with aiohttp.ClientSession() as session:
@@ -208,11 +208,11 @@ You now have access to authenticated database features.
                         result = await response.json()
                         return result.get("authenticated", False)
                     else:
-                        return False
+                        #return False
                         
         except Exception as e:
             self.logger.error(f"Error checking authentication: {e}")
-            return False
+            #return False
     
     async def cleanup(self):
         """Cleanup when plugin is unloaded"""

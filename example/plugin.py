@@ -32,20 +32,20 @@ class UniversalExamplePlugin(UniversalBotPlugin):
         self.demo_mode = True
         self.max_echo_length = 1000
     
-    async def initialize(self, adapter) -> bool:
+    async def _on_initialize(self) -> bool:
         """Initialize the plugin with bot adapter"""
         try:
             # Call parent initialization
-            if not await super().initialize(adapter):
-                return False
+            # Parent initialization handled automatically
+                #return False
             
-            self.logger.info(f"Initializing {self.name} plugin for {adapter.platform.value} platform")
+            self.logger.info(f"Initializing {self.name} plugin for {self.adapter.platform.value} platform")
             
             # Platform-specific initialization could go here
-            if adapter.platform == BotPlatform.SIMPLEX:
+            if self.adapter.platform == BotPlatform.SIMPLEX:
                 self.logger.info("SimpleX-specific initialization")
                 # Could access SimpleX-specific features here
-            elif adapter.platform == BotPlatform.MATRIX:
+            elif self.adapter.platform == BotPlatform.MATRIX:
                 self.logger.info("Matrix-specific initialization")
                 # Could access Matrix-specific features here
             
@@ -58,7 +58,7 @@ class UniversalExamplePlugin(UniversalBotPlugin):
             
         except Exception as e:
             self.logger.error(f"Failed to initialize example plugin: {e}")
-            return False
+            #return False
     
     def get_commands(self) -> List[str]:
         """Return list of commands this plugin handles"""
