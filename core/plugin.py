@@ -48,7 +48,8 @@ class UniversalCorePlugin(UniversalBotPlugin):
             "plugins", "reload", "enable", "disable", 
             "start", "stop", "status",
             "platform", "commands",
-            "container", "containers"
+            "container", "containers",
+            "tasks", "cancel"
         ]
     
     async def handle_command(self, context: CommandContext) -> Optional[str]:
@@ -82,6 +83,10 @@ class UniversalCorePlugin(UniversalBotPlugin):
                 return await self._handle_container(context)
             elif context.command == "containers":
                 return await self._handle_containers(context)
+            elif context.command == "tasks":
+                return await self._handle_tasks(context)
+            elif context.command == "cancel":
+                return await self._handle_cancel(context)
                 
         except Exception as e:
             self.logger.error(f"Error handling {context.command} command: {str(e)}", exc_info=True)
@@ -602,6 +607,87 @@ Usage: `!container <action> <plugin_name>`
         except Exception as e:
             self.logger.error(f"Error listing containers: {e}")
             return "❌ Error retrieving container information"
+    
+    async def _handle_tasks(self, context: CommandContext) -> str:
+        """Handle tasks command - show background task status"""
+        try:
+            # Get background processor from message handler via adapter
+            background_processor = None
+            if hasattr(self.adapter, '_bot_instance'):
+                message_handler = getattr(self.adapter._bot_instance, 'message_handler', None)
+                if message_handler and hasattr(message_handler, 'background_processor'):
+                    background_processor = message_handler.background_processor
+            
+            if not background_processor:
+                return "❌ Background task processor not available"
+            
+            # Get status and active tasks
+            status = background_processor.get_status()
+            active_tasks = background_processor.get_active_tasks()
+            
+            # Build status response
+            response = f"📋 **Background Task Status**\n\n"
+            
+            # Overall statistics
+            response += f"**System Status:**\n"
+            response += f"• Active Tasks: {status['active_tasks']}\n"
+            response += f"• Pending: {status['pending_tasks']}\n"
+            response += f"• Running: {status['running_tasks']}\n"
+            response += f"• Capacity Used: {status['capacity_used_percent']:.1f}%\n\n"
+            
+            response += f"**Statistics:**\n"
+            response += f"• Total Processed: {status['total_processed']}\n"
+            response += f"• Successful: {status['successful']}\n"
+            response += f"• Failed: {status['failed']}\n"
+            response += f"• Timed Out: {status['timed_out']}\n"
+            response += f"• Success Rate: {status['success_rate']:.1f}%\n\n"
+            
+            # Active tasks
+            if active_tasks:
+                response += f"**Active Tasks ({len(active_tasks)}):**\n"
+                for short_id, task_info in active_tasks.items():
+                    status_icon = "⏳" if task_info['status'] == 'pending' else "🏃"
+                    response += f"{status_icon} `{short_id}` - `{task_info['command']}` "
+                    response += f"({task_info['user']}) - {task_info['running_time']}\n"
+                response += f"\n💡 Use `!cancel <task_id>` to cancel a task"
+            else:
+                response += "✅ **No active tasks**"
+            
+            return response
+            
+        except Exception as e:
+            self.logger.error(f"Error getting task status: {e}")
+            return "❌ Error retrieving task status"
+    
+    async def _handle_cancel(self, context: CommandContext) -> str:
+        """Handle cancel command - cancel a background task"""
+        try:
+            if not context.has_args:
+                return "❌ **Usage:** `!cancel <task_id>`\n\nUse `!tasks` to see active task IDs"
+            
+            task_id = context.args[0]
+            
+            # Get background processor from message handler via adapter
+            background_processor = None
+            if hasattr(self.adapter, '_bot_instance'):
+                message_handler = getattr(self.adapter._bot_instance, 'message_handler', None)
+                if message_handler and hasattr(message_handler, 'background_processor'):
+                    background_processor = message_handler.background_processor
+            
+            if not background_processor:
+                return "❌ Background task processor not available"
+            
+            # Attempt to cancel the task
+            success = await background_processor.cancel_task(task_id)
+            
+            if success:
+                return f"✅ Task `{task_id}` has been cancelled"
+            else:
+                return f"❌ Task `{task_id}` not found or already completed\n\nUse `!tasks` to see active tasks"
+                
+        except Exception as e:
+            self.logger.error(f"Error cancelling task: {e}")
+            return "❌ Error cancelling task"
     
     async def cleanup(self):
         """Cleanup when plugin is unloaded"""
