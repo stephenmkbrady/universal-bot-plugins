@@ -9,6 +9,7 @@ It's been updated from the original Matrix-specific version to be platform-agnos
 
 from typing import List, Optional
 import logging
+import os
 from plugins.universal_plugin_base import UniversalBotPlugin, CommandContext, BotPlatform
 
 
@@ -22,23 +23,20 @@ class UniversalExamplePlugin(UniversalBotPlugin):
         # Set to True to enable this plugin
         self.enabled = True
         
-        # Define which platforms this plugin supports
-        self.supported_platforms = [BotPlatform.MATRIX, BotPlatform.SIMPLEX]
+        # Universal plugin - supports all platforms
+        self.supported_platforms = []  # Empty means supports all platforms
         
         if not self.logger:
             self.logger = logging.getLogger(f"plugin.{self.name}")
         
-        # Plugin-specific configuration
-        self.demo_mode = True
-        self.max_echo_length = 1000
+        # Plugin-specific configuration (can be overridden by environment variables)
+        self.demo_mode = os.getenv('EXAMPLE_DEMO_MODE', 'true').lower() == 'true'
+        self.max_echo_length = int(os.getenv('EXAMPLE_MAX_ECHO_LENGTH', '1000'))
+        self.repeat_count = int(os.getenv('EXAMPLE_REPEAT_COUNT', '3'))
     
     async def _on_initialize(self) -> bool:
         """Initialize the plugin with bot adapter"""
         try:
-            # Call parent initialization
-            # Parent initialization handled automatically
-                #return False
-            
             self.logger.info(f"Initializing {self.name} plugin for {self.adapter.platform.value} platform")
             
             # Platform-specific initialization could go here
@@ -58,7 +56,7 @@ class UniversalExamplePlugin(UniversalBotPlugin):
             
         except Exception as e:
             self.logger.error(f"Failed to initialize example plugin: {e}")
-            #return False
+            return False
     
     def get_commands(self) -> List[str]:
         """Return list of commands this plugin handles"""
@@ -105,11 +103,11 @@ class UniversalExamplePlugin(UniversalBotPlugin):
     async def _handle_repeat(self, context: CommandContext) -> str:
         """Repeat the user's message multiple times"""
         if not context.has_args:
-            return "🔁 **Repeat Command**\n\nUsage: `!repeat <message>`\nI'll repeat your message 3 times!"
+            return f"🔁 **Repeat Command**\n\nUsage: `!repeat <message>`\nI'll repeat your message {self.repeat_count} times!"
         
-        # Repeat the message 3 times
+        # Repeat the message using configured count
         message = context.args_raw
-        repeated = "\n".join([f"{i+1}. {message}" for i in range(3)])
+        repeated = "\n".join([f"{i+1}. {message}" for i in range(self.repeat_count)])
         return f"🔁 **Repeating message from {context.user_display_name}:**\n{repeated}"
     
     async def _handle_platform(self, context: CommandContext) -> str:
@@ -121,7 +119,7 @@ class UniversalExamplePlugin(UniversalBotPlugin):
 **Chat ID:** {context.chat_id}
 **Display Name:** {context.user_display_name}
 
-**Supported Platforms:** {', '.join([p.value for p in self.supported_platforms])}
+**Supported Platforms:** {'All platforms (universal)' if not self.supported_platforms else ', '.join([p.value for p in self.supported_platforms])}
 **Plugin Version:** {self.version}
 """
         
@@ -150,7 +148,7 @@ class UniversalExamplePlugin(UniversalBotPlugin):
 
 **Available Commands:**
 • `!echo <message>` - Echo back your message
-• `!repeat <message>` - Repeat your message 3 times  
+• `!repeat <message>` - Repeat your message {self.repeat_count} times  
 • `!example` - Show this demo
 • `!platform` - Show platform information
 
@@ -172,6 +170,7 @@ class UniversalExamplePlugin(UniversalBotPlugin):
 **Configuration:**
 • Demo Mode: {self.demo_mode}
 • Max Echo Length: {self.max_echo_length}
+• Repeat Count: {self.repeat_count}
 
 This is a universal plugin that works across bot platforms! 🚀"""
     

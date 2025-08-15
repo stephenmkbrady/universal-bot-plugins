@@ -1,18 +1,20 @@
 # Universal Bot Plugins
 
-A collection of universal plugins that work across multiple bot platforms (Matrix, SimpleX) using a unified plugin architecture.
+A collection of universal plugins for the Universal Chat Bot Framework. These plugins work across multiple bot platforms using a 100% decoupled plugin architecture.
+
+🔗 **Repository**: https://github.com/stephenmkbrady/universal-bot-plugins  
+⚠️ **Required**: The bot framework requires platform plugins to function
 
 ## 🔌 Available Plugins
 
-### Core Plugins
-- **core** - Essential bot commands (ping, uptime, plugin management)
-- **example** - Template plugin for developers
-
-### Feature Plugins  
+- **core** - Essential bot commands (ping, uptime, plugin management) 
+- **ai** - AI-powered features (magic 8-ball, advice, content generation with message context)
 - **youtube** - YouTube video processing, summarization, and Q&A
-- **ai** - AI-powered features (magic 8-ball, advice, content generation)
-- **auth** - PIN-based authentication system
-- **database** - Database interaction and management
+- **homeassistant** - Home Assistant integration and control
+- **loupe** - Website monitoring and content tracking
+- **simplex** - ⚠️ **REQUIRED** Platform plugin for SimpleX Chat integration
+- **stt_openai** - Speech-to-text processing using OpenAI Whisper
+- **example** - Template plugin for developers and testing
 
 ## 📋 Plugin Commands & Features
 
@@ -23,26 +25,22 @@ A collection of universal plugins that work across multiple bot platforms (Matri
 - `!reload <plugin>` - Manually reload a specific plugin
 - `!enable <plugin>` - Enable a disabled plugin
 - `!disable <plugin>` - Disable a plugin (core cannot be disabled)
+- `!start <plugin>` - Start a plugin
+- `!stop <plugin>` - Stop a plugin
+- `!status` - Show overall bot status
 - `!platform` - Show platform-specific information
 - `!commands` - List all available commands across plugins
+- `!container <action>` - Manage containerized plugins
+- `!containers` - List container status
+
+**Features:**
+- Universal bot management commands
+- Hot plugin reloading
+- Platform detection and information
+- Container management for advanced plugins
 
 ### Bot Core Commands
 - `!help` - Show comprehensive help with bot information and all available plugin commands
-
-### YouTube Plugin Commands
-- `!youtube <url>` - Process and summarize YouTube videos with AI
-- `!yt <url>` - Alias for the youtube command
-- `!video <url>` - Alternative alias for video processing
-- `!youtube <question>` - Ask questions about the last processed video
-- `!summary` - Show information about the last processed video
-- `!summary <question>` - Ask specific questions about the last video
-
-**Features:**
-- Automatic subtitle extraction from YouTube videos
-- AI-powered video summarization using OpenRouter
-- Q&A functionality for processed videos
-- Support for multiple subtitle languages
-- Per-chat video history and caching
 
 ### AI Plugin Commands
 - `!8ball <question>` - Magic 8-ball with NIST randomness and AI responses
@@ -52,37 +50,110 @@ A collection of universal plugins that work across multiple bot platforms (Matri
 - `!song [theme]` - Generate custom songs about any theme
 - `!nist` - Show current NIST Randomness Beacon value
 - `!ai <question>` - Ask the AI assistant anything
-- `!ask <question>` - Alias for AI assistant
+- `!ask [options] <question>` - Ask AI assistant with message context
+- `!msghistory` - Debug message history storage
+
+**Advanced Context Usage:**
+- `!ask -m 1 <question>` - Use the last 1 message as context
+- `!ask -m 1-3 <question>` - Use last 3 messages as context
+- `!ask -m 1,4,6 <question>` - Use specific message indices
+- `!ask -m 2-5,8 <question>` - Use ranges and specific messages
 
 **Features:**
 - Integration with NIST Randomness Beacon for true randomness
 - Multiple AI models via OpenRouter API
-- Context-aware responses
+- Message context awareness with flexible selection
 - Bible verse recommendations with explanations
 - Creative content generation (songs, advice)
+- Configurable token limits and API timeouts
+- Rolling message history with configurable limits
 
-### Auth Plugin Commands
-- `!pin` - Request a new authentication PIN for the current room
-- `!request` - Alias for PIN request
-- `!auth <pin>` - Verify authentication using a PIN
-- `!verify <pin>` - Alias for authentication verification
+### YouTube Plugin Commands
+- `!youtube <url>` - Process and summarize YouTube videos with AI
+- `!yt <url>` - Alias for the youtube command
+- `!video <url>` - Alternative alias for video processing
+- `!youtube <question>` - Ask questions about the last processed video
+- `!summary` - Show information about the last processed video
+- `!summary <question>` - Ask specific questions about the last video
+- `!ytconfig` - Show YouTube plugin configuration
 
 **Features:**
-- Room-based PIN authentication
-- Secure API integration for PIN verification
-- User access control for database features
-- Platform-agnostic authentication system
+- Automatic subtitle extraction from YouTube videos
+- AI-powered video summarization using OpenRouter
+- Q&A functionality for processed videos
+- Support for multiple subtitle languages
+- Per-chat video history and caching
+- Configurable processing options
+
+### Home Assistant Plugin Commands
+- `!ha <command>` - General Home Assistant commands
+- `!homeassistant <command>` - Full plugin name alias
+- `!lights [action]` - Control smart lights
+- `!switches [action]` - Control smart switches
+- `!sensors` - View sensor data
+- `!climate [action]` - Control climate systems
+- `!automation [action]` - Manage automations
+- `!entities` - List available entities
+
+**Features:**
+- Full Home Assistant API integration
+- Control lights, switches, climate, and sensors
+- Automation management
+- Entity discovery and status monitoring
+- Secure authentication with HA tokens
+
+### Loupe Plugin Commands  
+- `!loupe` - Show configured monitoring sites and help
+- `!loupe <site_key>` - Manually trigger monitoring for a specific site
+
+**Features:**
+- Automated website monitoring and change detection
+- HTML to text conversion with configurable selectors
+- Diff-based change notifications
+- Multi-site configuration with YAML
+- Scheduled monitoring with customizable intervals
+- Notification delivery to multiple channels
+
+### SimpleX Platform Plugin Commands
+- `!invite` - Generate invitation links
+- `!contacts` - List bot contacts
+- `!groups` - List bot groups
+- `!debug` - Show platform debug information
+- `!admin` - Show admin information
+- `!reload_admin` - Reload admin configuration
+- `!stats` - Show platform statistics
+- `!whoami` - Show user identity and admin status
+
+**Features:**
+- SimpleX Chat CLI integration
+- Contact and group management
+- Invitation link generation
+- Admin permission system
+- Platform-specific debugging tools
+
+### Speech-to-Text Plugin Commands
+- `!transcribe` - Transcribe audio files using OpenAI Whisper
+- `!stt` - Alias for transcribe command
+- `!sttconfig` - Show STT plugin configuration
+
+**Features:**
+- OpenAI Whisper integration for speech recognition
+- Multiple audio format support
+- Configurable transcription options
+- Automatic file download and processing
 
 ### Example Plugin Commands  
 - `!echo <message>` - Echo back user messages with platform info
-- `!repeat <message>` - Repeat messages multiple times
+- `!repeat <message>` - Repeat messages (configurable count)
 - `!example` - Show plugin demonstration and capabilities
+- `!platform` - Show detailed platform information
 
 **Features:**
 - Demonstrates universal plugin architecture
-- Platform-aware responses
-- Configurable demo mode
+- Platform-aware responses with detailed info
+- Configurable demo mode and limits
 - Developer template for creating new plugins
+- Environment variable configuration support
 
 ## 🚀 Supported Platforms
 
@@ -179,11 +250,31 @@ plugin_name/
 
 ## 🔑 Environment Variables
 
-Some plugins require API keys:
-
+### Required API Keys
 - `OPENROUTER_API_KEY` - For AI and YouTube summarization features
-- `DATABASE_API_URL` - For database plugin functionality  
-- `DATABASE_API_KEY` - For database authentication
+
+### AI Plugin Configuration
+- `AI_MODEL` - AI model to use (default: "cognitivecomputations/dolphin3.0-mistral-24b:free")
+- `AI_MAX_MESSAGES` - Message history limit per chat (default: 50)
+- `AI_MAX_RECENT_DISPLAY` - Recent messages to show in debug (default: 10)
+- `AI_MAX_PREVIEW_LENGTH` - Message preview character limit (default: 100)
+- `AI_NIST_UPDATE_INTERVAL` - NIST beacon update interval in seconds (default: 60)
+- `AI_API_TIMEOUT` - API request timeout in seconds (default: 10)
+- `AI_TOKENS_8BALL` - Token limit for 8-ball responses (default: 100)
+- `AI_TOKENS_ADVICE` - Token limit for advice responses (default: 200)
+- `AI_TOKENS_BIBLE` - Token limit for Bible responses (default: 300)
+- `AI_TOKENS_SONG` - Token limit for song generation (default: 400)
+- `AI_TOKENS_AI` - Token limit for general AI responses (default: 500)
+- `AI_TOKENS_ASK` - Token limit for context-aware responses (default: 600)
+
+### Example Plugin Configuration
+- `EXAMPLE_DEMO_MODE` - Enable demo mode (default: true)
+- `EXAMPLE_MAX_ECHO_LENGTH` - Maximum echo message length (default: 1000)
+- `EXAMPLE_REPEAT_COUNT` - Number of times to repeat messages (default: 3)
+
+### Other Plugin Configuration
+- `NIST_BEACON_URL` - Custom NIST beacon endpoint
+- `OPENROUTER_API_URL` - Custom OpenRouter API endpoint
 
 ## 🛠️ Creating New Plugins
 

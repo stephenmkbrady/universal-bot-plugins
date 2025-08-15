@@ -117,14 +117,29 @@ class UniversalAIPlugin(UniversalBotPlugin):
         if not self.logger:
             self.logger = logging.getLogger(f"plugin.{self.name}")
         
-        # AI configuration
+        # AI configuration (configurable via environment variables)
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         self.nist_beacon_url = os.getenv("NIST_BEACON_URL", "https://beacon.nist.gov/beacon/2.0/pulse/last")
         self.openrouter_url = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions")
-        self.model = "cognitivecomputations/dolphin3.0-mistral-24b:free"
+        self.model = os.getenv("AI_MODEL", "cognitivecomputations/dolphin3.0-mistral-24b:free")
         
         # Message history management
-        self.message_history = MessageHistory(max_messages=50)
+        self.max_messages = int(os.getenv("AI_MAX_MESSAGES", "50"))
+        self.message_history = MessageHistory(max_messages=self.max_messages)
+        
+        # Configurable limits  
+        self.max_recent_display = int(os.getenv("AI_MAX_RECENT_DISPLAY", "10"))
+        self.max_preview_length = int(os.getenv("AI_MAX_PREVIEW_LENGTH", "100"))
+        self.nist_update_interval = int(os.getenv("AI_NIST_UPDATE_INTERVAL", "60"))
+        self.api_timeout = int(os.getenv("AI_API_TIMEOUT", "10"))
+        
+        # Token limits for different commands
+        self.tokens_8ball = int(os.getenv("AI_TOKENS_8BALL", "100"))
+        self.tokens_advice = int(os.getenv("AI_TOKENS_ADVICE", "200")) 
+        self.tokens_bible = int(os.getenv("AI_TOKENS_BIBLE", "300"))
+        self.tokens_song = int(os.getenv("AI_TOKENS_SONG", "400"))
+        self.tokens_ai = int(os.getenv("AI_TOKENS_AI", "500"))
+        self.tokens_ask = int(os.getenv("AI_TOKENS_ASK", "600"))
         self.parser = MessageIndexParser()
     
     async def _on_initialize(self) -> bool:
@@ -213,11 +228,11 @@ class UniversalAIPlugin(UniversalBotPlugin):
             
             if chat_id in self.message_history.chat_histories:
                 all_messages = self.message_history.chat_histories[chat_id]
-                debug_info += f"**Recent Messages (last 10):**\n"
+                debug_info += f"**Recent Messages (last {self.max_recent_display}):**\n"
                 
-                recent_messages = all_messages[-10:] if all_messages else []
+                recent_messages = all_messages[-self.max_recent_display:] if all_messages else []
                 for i, msg in enumerate(recent_messages):
-                    debug_info += f"{i+1}. [{msg.sender}] {msg.timestamp.strftime('%H:%M:%S')}: {msg.content[:100]}...\n"
+                    debug_info += f"{i+1}. [{msg.sender}] {msg.timestamp.strftime('%H:%M:%S')}: {msg.content[:self.max_preview_length]}...\n"
                     
                 if not recent_messages:
                     debug_info += "No messages stored yet.\n"
@@ -312,7 +327,7 @@ class UniversalAIPlugin(UniversalBotPlugin):
 **Source:** US National Institute of Standards and Technology
 
 The NIST Randomness Beacon provides publicly verifiable randomness.
-This value changes every 60 seconds and is cryptographically signed."""
+This value changes every {self.nist_update_interval} seconds and is cryptographically signed."""
             
             return response
             
@@ -375,7 +390,7 @@ This value changes every 60 seconds and is cryptographically signed."""
                     recent_messages = all_messages[-5:] if all_messages else []
                     self.logger.info(f"  - Recent messages (last 5):")
                     for i, msg in enumerate(recent_messages):
-                        self.logger.info(f"    {i+1}. [{msg.sender}]: {msg.content[:50]}...")
+                        self.logger.info(f"    {i+1}. [{msg.sender}]: {msg.content[:self.max_preview_length]}...")
                 else:
                     self.logger.info(f"  - No chat history found for chat_id: {context.chat_id}")
                 
@@ -417,7 +432,7 @@ This value changes every 60 seconds and is cryptographically signed."""
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     self.nist_beacon_url,
-                    timeout=aiohttp.ClientTimeout(total=10)
+                    timeout=aiohttp.ClientTimeout(total=self.api_timeout)
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -453,7 +468,7 @@ Examples of {polarity} responses:
 
 Give just the 8-ball response, nothing else."""
         
-        return await self._call_openrouter_api(prompt, max_tokens=100)
+        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_8ball)
     
     async def _generate_advice(self, topic: str) -> str:
         """Generate helpful advice on a topic"""
@@ -467,7 +482,7 @@ Make it:
 
 Keep it concise but meaningful (2-3 sentences max)."""
         
-        return await self._call_openrouter_api(prompt, max_tokens=200)
+        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_advice)
     
     async def _generate_bible_verse(self, topic: str) -> str:
         """Generate or recall a relevant Bible verse"""
@@ -482,7 +497,7 @@ Format like: "Verse text" - Reference
 
 Then add a short explanation of how it relates to {topic}."""
         
-        return await self._call_openrouter_api(prompt, max_tokens=300)
+        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_bible)
     
     async def _generate_song(self, topic: str) -> str:
         """Generate a short song about a topic"""
@@ -509,7 +524,7 @@ Format:
 
 Keep it simple and singable!"""
         
-        return await self._call_openrouter_api(prompt, max_tokens=400)
+        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_song)
     
     async def _generate_ai_response(self, question: str) -> str:
         """Generate a general AI response"""
@@ -523,7 +538,7 @@ Provide:
 
 Keep response concise but comprehensive."""
         
-        return await self._call_openrouter_api(prompt, max_tokens=500)
+        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_ai)
     
     async def _generate_ai_response_with_context(self, question: str, selected_messages: List[ChatMessage]) -> str:
         """Generate AI response with optional message context"""
@@ -549,7 +564,7 @@ Provide:
 
 Keep response concise but comprehensive."""
         
-        return await self._call_openrouter_api(prompt, max_tokens=600)
+        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_ask)
     
     def _show_ai_help(self) -> str:
         """Show AI assistant help information"""
@@ -576,7 +591,7 @@ Keep response concise but comprehensive."""
 • `!ask -m 1-3 how many calories in total?`
 • `!ask -m1,4,6 extract URLs from paths using base URL`
 
-**Note**: Only the last 50 messages per chat are remembered."""
+**Note**: Only the last {self.max_messages} messages per chat are remembered."""
     
     async def _get_conversation_context(self, context: CommandContext) -> List[Dict]:
         """Get conversation context using platform service (platform-agnostic)"""
@@ -585,7 +600,7 @@ Keep response concise but comprehensive."""
             message_service = self.require_service('message_history')
             if message_service:
                 self.logger.info("📜 AI: Using message history service for conversation context")
-                messages = await message_service.get_recent_messages(context.chat_id, 10)
+                messages = await message_service.get_recent_messages(context.chat_id, self.max_recent_display)
                 
                 # Convert service messages to our format
                 for msg_data in messages:
@@ -614,9 +629,13 @@ Keep response concise but comprehensive."""
     
 # SimpleX-specific helper methods removed - now using platform service for message history
     
-    async def _call_openrouter_api(self, prompt: str, max_tokens: int = 300) -> str:
+    async def _call_openrouter_api(self, prompt: str, max_tokens: int = None) -> str:
         """Make API call to OpenRouter"""
         try:
+            # Use default token limit if none provided
+            if max_tokens is None:
+                max_tokens = self.tokens_ai
+                
             headers = {
                 "Authorization": f"Bearer {self.openrouter_api_key}",
                 "Content-Type": "application/json",
@@ -633,8 +652,14 @@ Keep response concise but comprehensive."""
                 "temperature": 0.8
             }
             
+            
             async with aiohttp.ClientSession() as session:
-                async with session.post(self.openrouter_url, headers=headers, json=data) as response:
+                async with session.post(
+                    self.openrouter_url, 
+                    headers=headers, 
+                    json=data,
+                    timeout=aiohttp.ClientTimeout(total=self.api_timeout)
+                ) as response:
                     if response.status == 200:
                         result = await response.json()
                         return result['choices'][0]['message']['content'].strip()
