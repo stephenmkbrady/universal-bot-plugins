@@ -11,6 +11,7 @@ import aiohttp
 import time
 import re
 import yaml
+import random
 from typing import List, Optional, Set, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
@@ -147,6 +148,9 @@ class UniversalAIPlugin(UniversalBotPlugin):
         self.tokens_ai = tokens_config.get('ai', int(os.getenv("AI_TOKENS_AI", "500")))
         self.tokens_ask = tokens_config.get('ask', int(os.getenv("AI_TOKENS_ASK", "600")))
         self.parser = MessageIndexParser()
+        
+        # Public commands management - will read from admin_config.yml
+        self.admin_config_path = '/home/user/Documents/DEV/SIMPLEX_BOT_V2/admin_config.yml'
     
     async def _on_initialize(self) -> bool:
         """Initialize the plugin with bot adapter"""
@@ -165,7 +169,7 @@ class UniversalAIPlugin(UniversalBotPlugin):
     
     def get_commands(self) -> List[str]:
         """Return list of commands this plugin handles"""
-        return ["8ball", "advice", "advise", "bible", "song", "nist", "ai", "ask", "msghistory"]
+        return ["8ball", "advice", "advise", "bible", "song", "nist", "ai", "ask", "msghistory", "publiccmds", "publiccmd"]
     
     async def handle_command(self, context: CommandContext) -> Optional[str]:
         """Handle commands for this plugin"""
@@ -189,6 +193,10 @@ class UniversalAIPlugin(UniversalBotPlugin):
                 return await self._handle_ai_question(context)
             elif context.command == "msghistory":
                 return await self._handle_msghistory_debug(context)
+            elif context.command == "publiccmds":
+                return await self._handle_publiccmds_list(context)
+            elif context.command == "publiccmd":
+                return await self._handle_publiccmd_manage(context)
                 
         except Exception as e:
             self.logger.error(f"Error handling {context.command} command: {str(e)}", exc_info=True)
@@ -252,6 +260,83 @@ class UniversalAIPlugin(UniversalBotPlugin):
         except Exception as e:
             return f"❌ Error getting message history debug: {e}"
     
+    async def _handle_publiccmds_list(self, context: CommandContext) -> str:
+        """List all public commands"""
+        try:
+            public_commands = self._load_admin_config().get('public_commands', [])
+            
+            if not public_commands:
+                return "📋 **Public Commands**\n\nNo public commands are currently enabled."
+            
+            public_list = sorted(list(public_commands))
+            commands_text = "\n".join([f"• `!{cmd}`" for cmd in public_list])
+            
+            return f"📋 **Public Commands** ({len(public_list)} enabled)\n\n{commands_text}\n\n💡 Use `!publiccmd add/remove <command>` to manage"
+            
+        except Exception as e:
+            return f"❌ Error listing public commands: {e}"
+    
+    async def _handle_publiccmd_manage(self, context: CommandContext) -> str:
+        """Manage public commands (add/remove)"""
+        try:
+            if not context.has_args:
+                return """📋 **Public Command Management**
+
+**Usage:**
+• `!publiccmd add <command>` - Add command to public list
+• `!publiccmd remove <command>` - Remove command from public list  
+• `!publiccmd list` - Show current public commands
+
+**Available commands:** 8ball, advice, advise, bible, song, nist, ai, ask, msghistory
+
+**Examples:**
+• `!publiccmd add 8ball`
+• `!publiccmd remove bible`"""
+
+            args = context.args
+            if len(args) < 2:
+                return "❌ **Usage:** `!publiccmd <add/remove> <command>`"
+            
+            action = args[0].lower()
+            command = args[1].lower()
+            
+            # Available commands from this plugin
+            available_commands = ["8ball", "advice", "advise", "bible", "song", "nist", "ai", "ask", "msghistory"]
+            
+            if action == "list":
+                return await self._handle_publiccmds_list(context)
+            
+            if command not in available_commands:
+                return f"❌ **Invalid command:** `{command}`\n💡 Available: {', '.join(available_commands)}"
+            
+            # Load current admin config
+            admin_config = self._load_admin_config()
+            public_commands = set(admin_config.get('public_commands', []))
+            
+            if action == "add":
+                if command in public_commands:
+                    return f"ℹ️ Command `!{command}` is already public"
+                
+                public_commands.add(command)
+                admin_config['public_commands'] = sorted(list(public_commands))
+                self._save_admin_config(admin_config)
+                return f"✅ Added `!{command}` to public commands\n📋 Public commands: {len(public_commands)} total"
+                
+            elif action == "remove":
+                if command not in public_commands:
+                    return f"ℹ️ Command `!{command}` is not in public commands"
+                
+                public_commands.remove(command)
+                admin_config['public_commands'] = sorted(list(public_commands))
+                self._save_admin_config(admin_config)
+                return f"✅ Removed `!{command}` from public commands\n📋 Public commands: {len(public_commands)} total"
+                
+            else:
+                return f"❌ **Invalid action:** `{action}`\n💡 Use: add, remove, or list"
+                
+        except Exception as e:
+            return f"❌ Error managing public commands: {e}"
+    
     async def _handle_8ball(self, context: CommandContext) -> str:
         """Handle magic 8-ball command"""
         if not context.has_args:
@@ -295,7 +380,21 @@ class UniversalAIPlugin(UniversalBotPlugin):
         if not self.openrouter_api_key:
             return "❌ AI features require OPENROUTER_API_KEY environment variable"
         
-        topic = context.args_raw if context.has_args else "hope and encouragement"
+        if context.has_args:
+            topic = context.args_raw
+        else:
+            # Use NIST beacon to randomly select a topic
+            random_topics = [
+                "hope", "strength", "peace", "love", "faith", "wisdom", "courage", 
+                "forgiveness", "joy", "patience", "kindness", "perseverance", 
+                "comfort", "guidance", "trust", "protection", "healing", "gratitude",
+                "humility", "mercy", "grace", "salvation", "redemption", "renewal"
+            ]
+            beacon_int = await self._get_nist_beacon_random_number()
+            current_second = int(time.time())
+            combined_randomness = beacon_int + current_second
+            topic_index = combined_randomness % len(random_topics)
+            topic = random_topics[topic_index]
         
         try:
             verse = await self._generate_bible_verse(topic)
@@ -323,13 +422,21 @@ class UniversalAIPlugin(UniversalBotPlugin):
     async def _handle_nist(self, context: CommandContext) -> str:
         """Handle NIST beacon randomness command"""
         try:
-            beacon_int = await self._get_nist_beacon_random_number()
+            beacon_data = await self._get_nist_beacon_full_data()
+            if not beacon_data:
+                return "❌ Unable to access NIST Randomness Beacon at the moment."
+            
+            beacon_int = int(beacon_data['outputValue'], 16)
             is_positive = (beacon_int % 2) == 0
+            timestamp = beacon_data.get('timeStamp', 'Unknown')
+            pulse_index = beacon_data.get('pulseIndex', 'Unknown')
             
             response = f"""🔢 **NIST Randomness Beacon**
 
 **Current Value:** {beacon_int}
 **Polarity:** {'POSITIVE' if is_positive else 'NEGATIVE'}
+**Pulse Index:** {pulse_index}
+**Timestamp:** {timestamp}
 **Source:** US National Institute of Standards and Technology
 
 The NIST Randomness Beacon provides publicly verifiable randomness.
@@ -425,12 +532,12 @@ This value changes every {self.nist_update_interval} seconds and is cryptographi
             answer = await self._generate_ai_response_with_context(question, selected_messages)
             
             # Format response
-            response = f"🤖 **AI Assistant**\n\n"
+            response = f"🤖 *AI Assistant*\n"
             
             if selected_messages:
-                response += f"📝 **Context**: Used {len(selected_messages)} previous message(s)\n\n"
+                response += f"📝 Context: Used {len(selected_messages)} previous message(s)\n"
             
-            response += f"**Question:** {question}\n\n**Answer:** {answer}"
+            response += f"{answer}"
             
             return response
             
@@ -438,8 +545,8 @@ This value changes every {self.nist_update_interval} seconds and is cryptographi
             self.logger.error(f"Error generating AI response: {e}")
             return "❌ Unable to process your question at the moment."
     
-    async def _get_nist_beacon_random_number(self) -> int:
-        """Get current NIST Randomness Beacon value and return as integer"""
+    async def _get_nist_beacon_full_data(self) -> Optional[dict]:
+        """Get full NIST Randomness Beacon data"""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -448,14 +555,27 @@ This value changes every {self.nist_update_interval} seconds and is cryptographi
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
-                        output_value = data['pulse']['outputValue']
-                        beacon_int = int(output_value, 16)
-                        return beacon_int
+                        return data['pulse']
                     else:
-                        # Fallback to timestamp
-                        return int(time.time())
+                        self.logger.warning(f"NIST beacon returned HTTP {response.status}")
+                        return None
         except Exception as e:
             self.logger.error(f"Error getting NIST beacon: {e}")
+            return None
+
+    async def _get_nist_beacon_random_number(self) -> int:
+        """Get current NIST Randomness Beacon value and return as integer"""
+        try:
+            beacon_data = await self._get_nist_beacon_full_data()
+            if beacon_data:
+                output_value = beacon_data['outputValue']
+                beacon_int = int(output_value, 16)
+                return beacon_int
+            else:
+                # Fallback to timestamp
+                return int(time.time())
+        except Exception as e:
+            self.logger.error(f"Error processing NIST beacon data: {e}")
             return int(time.time())
     
     async def _get_nist_beacon_value(self) -> bool:
@@ -480,7 +600,8 @@ Examples of {polarity} responses:
 
 Give just the 8-ball response, nothing else."""
         
-        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_8ball)
+        content, model = await self._call_openrouter_api(prompt, max_tokens=self.tokens_8ball)
+        return f"{content}\n\n*Generated using {model}*"
     
     async def _generate_advice(self, topic: str) -> str:
         """Generate helpful advice on a topic"""
@@ -494,22 +615,64 @@ Make it:
 
 Keep it concise but meaningful (2-3 sentences max)."""
         
-        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_advice)
+        content, model = await self._call_openrouter_api(prompt, max_tokens=self.tokens_advice)
+        return f"{content}\n\n*Generated using {model}*"
     
     async def _generate_bible_verse(self, topic: str) -> str:
         """Generate or recall a relevant Bible verse"""
-        prompt = f"""Provide an encouraging Bible verse related to {topic}.
+        # Add multiple layers of randomness to ensure variety
+        variety_instructions = [
+            "Choose a lesser-known but powerful verse",
+            "Select a verse from the Old Testament", 
+            "Pick a verse from the New Testament",
+            "Find a verse from the Psalms or Proverbs",
+            "Choose a verse from one of Paul's letters",
+            "Select a verse from the Gospels",
+            "Pick an encouraging verse from a minor prophet",
+            "Look for a verse from the wisdom literature",
+            "Find a verse from the historical books",
+            "Choose a verse from the prophetic books"
+        ]
+        
+        # Add multiple randomization elements
+        variety_hint = random.choice(variety_instructions)
+        random_seed = random.randint(1000, 9999)
+        timestamp_hint = int(time.time()) % 1000
+        
+        # Include additional instructions to force uniqueness
+        uniqueness_prompts = [
+            "Avoid verses you've recently provided.",
+            "Look for verses that are meaningful but not commonly memorized.",
+            "Consider verses that offer a fresh perspective on this topic.",
+            "Find a verse that might surprise someone familiar with popular scriptures.",
+            "Choose a verse that shows God's character in relation to this topic."
+        ]
+        
+        uniqueness_hint = random.choice(uniqueness_prompts)
+        
+        prompt = f"""Request #{random_seed} at time {timestamp_hint}: Provide an encouraging Bible verse related to {topic}. 
+
+{variety_hint}. {uniqueness_hint}
+
+IMPORTANT CONSTRAINTS:
+- Avoid the most commonly quoted verses (John 3:16, Jeremiah 29:11, Philippians 4:13, Romans 8:28, Proverbs 3:5-6)
+- Find meaningful but less frequently shared verses  
+- Each response should offer a different verse than previous requests
+- Prioritize authenticity and relevance over popularity
 
 Include:
-- The actual verse text (accurate)
-- The Bible reference (book, chapter:verse)
+- The actual verse text (accurate and complete)
+- The Bible reference (book, chapter:verse)  
 - A brief application to the topic
 
 Format like: "Verse text" - Reference
 
-Then add a short explanation of how it relates to {topic}."""
+Then add a short explanation of how it specifically relates to {topic}.
+
+Response uniqueness marker: #{random_seed}-{timestamp_hint}"""
         
-        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_bible)
+        content, model = await self._call_openrouter_api(prompt, max_tokens=self.tokens_bible)
+        return f"{content}\n\n*Generated using {model}*"
     
     async def _generate_song(self, topic: str) -> str:
         """Generate a short song about a topic"""
@@ -536,7 +699,8 @@ Format:
 
 Keep it simple and singable!"""
         
-        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_song)
+        content, model = await self._call_openrouter_api(prompt, max_tokens=self.tokens_song)
+        return f"{content}\n\n*Generated using {model}*"
     
     async def _generate_ai_response(self, question: str) -> str:
         """Generate a general AI response"""
@@ -550,7 +714,8 @@ Provide:
 
 Keep response concise but comprehensive."""
         
-        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_ai)
+        content, model = await self._call_openrouter_api(prompt, max_tokens=self.tokens_ai)
+        return f"{content}\n\n*Generated using {model}*"
     
     async def _generate_ai_response_with_context(self, question: str, selected_messages: List[ChatMessage]) -> str:
         """Generate AI response with optional message context"""
@@ -576,13 +741,26 @@ Provide:
 
 Keep response concise but comprehensive."""
         
-        return await self._call_openrouter_api(prompt, max_tokens=self.tokens_ask)
+        content, model = await self._call_openrouter_api(prompt, max_tokens=self.tokens_ask)
+        return f"{content}\n\n*Generated using {model}*"
     
     def _show_ai_help(self) -> str:
         """Show AI assistant help information"""
-        return """🤖 **AI Assistant Plugin**
+        return """🤖 *AI Assistant Plugin*
 
-**Basic Usage:**
+**AI Commands Available:**
+• `!8ball <question>` - Magic 8-ball with NIST randomness
+• `!advice [topic]` - Get helpful advice on any topic
+• `!bible [topic]` - Get random Bible verse (NIST randomized if no topic)
+• `!song [topic]` - Generate a song about any topic
+• `!nist` - Show current NIST Randomness Beacon value
+• `!msghistory` - Debug message history for this chat
+
+**Public Command Management:**
+• `!publiccmds` - List all public commands
+• `!publiccmd add/remove <command>` - Manage public command list
+
+**AI Chat Commands:**
 • `!ask your question here` - Ask AI without context
 • `!ai your question here` - Same as !ask
 
@@ -599,9 +777,11 @@ Keep response concise but comprehensive."""
 • etc.
 
 **Examples:**
+• `!8ball Will it rain today?`
+• `!advice relationships`
+• `!bible strength`
 • `!ask m1 what is the main topic discussed?`
 • `!ask m1-3 how many calories in total?`
-• `!ask m1,4,6 extract URLs from paths using base URL`
 
 **Note**: Only the last {self.max_messages} messages per chat are remembered."""
     
@@ -641,7 +821,7 @@ Keep response concise but comprehensive."""
     
 # SimpleX-specific helper methods removed - now using platform service for message history
     
-    async def _call_openrouter_api(self, prompt: str, max_tokens: int = None) -> str:
+    async def _call_openrouter_api(self, prompt: str, max_tokens: int = None) -> tuple[str, str]:
         """Make API call to OpenRouter with fallback models"""
         # Use default token limit if none provided
         if max_tokens is None:
@@ -701,7 +881,7 @@ Keep response concise but comprehensive."""
                             content = result['choices'][0]['message']['content'].strip()
                             if attempt > 0:
                                 self.logger.info(f"✅ AI API succeeded with fallback model {model}")
-                            return content
+                            return content, model
                         else:
                             error_text = await response.text()
                             self.logger.error(f"❌ SINGLE_PASS API error {response.status} with {model}: {error_text}")
@@ -713,7 +893,7 @@ Keep response concise but comprehensive."""
         
         # If all models failed
         self.logger.error(f"❌ All fallback models failed for AI request")
-        return "❌ AI service temporarily unavailable. All fallback models failed."
+        return "❌ AI service temporarily unavailable. All fallback models failed.", "unknown"
     
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from YAML file"""
@@ -730,6 +910,31 @@ Keep response concise but comprehensive."""
         except Exception as e:
             self.logger.error(f"❌ AI CONFIG: Error loading configuration from {config_path}: {e}")
             return {}
+    
+    def _load_admin_config(self) -> Dict[str, Any]:
+        """Load admin configuration from admin_config.yml"""
+        try:
+            if os.path.exists(self.admin_config_path):
+                with open(self.admin_config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                    return config or {}
+            else:
+                self.logger.warning(f"⚠️ Admin config not found at {self.admin_config_path}")
+                return {}
+        except Exception as e:
+            self.logger.error(f"❌ Error loading admin config from {self.admin_config_path}: {e}")
+            return {}
+    
+    def _save_admin_config(self, config: Dict[str, Any]):
+        """Save admin configuration to admin_config.yml"""
+        try:
+            with open(self.admin_config_path, 'w') as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            
+            self.logger.info(f"✅ Saved admin config to {self.admin_config_path}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error saving admin config to {self.admin_config_path}: {e}")
     
     async def cleanup(self):
         """Cleanup when plugin is unloaded"""
